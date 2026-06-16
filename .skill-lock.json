@@ -1,0 +1,26 @@
+{
+  "version": 3,
+  "skills": {
+    "last30days": {
+      "source": "mvanhorn/last30days-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mvanhorn/last30days-skill.git",
+      "skillPath": "skills/last30days/SKILL.md",
+      "skillFolderHash": "63ee58e42ad33abd1e5b114f8f28f367681cb8ff",
+      "installedAt": "2026-06-12T22:32:40.315Z",
+      "updatedAt": "2026-06-12T22:32:40.315Z"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/skills.git",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "skillFolderHash": "3013fdeb8a11b10b1eb795ec3ae8bfca38f7c26d",
+      "installedAt": "2026-06-12T22:32:46.163Z",
+      "updatedAt": "2026-06-12T22:32:46.163Z"
+    }
+  },
+  "dismissed": {
+    "findSkillsPrompt": true
+  }
+}
