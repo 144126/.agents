@@ -206,7 +206,7 @@ Each dimension must be investigated from multiple angles and reported with speci
 - Expert commentary/analysis (blogs, talks, interviews)
 - Contrarian/critical sources (skeptical voices, failure postmortems)
 
-### Minimum Source Count: 216+ (ultradeep mode)
+### Minimum Source Count: 216+ — Level 1 initial sources should themselves aim for >=216 relentlessly. Multi-level BFS expansion (following links/references/ideas from each source to generate further sources, iteratively) is used only when Level 1 falls short.
 
 ### Source Diversity Requirements
 - At least 4 different source types must be represented
@@ -252,7 +252,7 @@ Each dimension must be investigated from multiple angles and reported with speci
 [The rich keyword set generated in Phase 1, organized by category]
 
 ## Mode
-UltraDeep (8+ phases, 20-45 min, 216+ sources)
+Deep Research (8-phase pipeline, multi-level BFS expansion, 216+ sources)
 ```
 
 ---
@@ -325,7 +325,7 @@ Frameworks: LangGraph, CrewAI, AutoGen, Semantic Kernel, Dify, Coze
 - **Don't over-ask:** If the intent is clear (e.g., "compare PostgreSQL vs Supabase"), don't ask clarifying questions — just build the prompt.
 - **Don't be generic:** Every dimension must be tailored to the specific topic, not copied verbatim from this template.
 - **Don't forget contrarian views:** The most valuable research surfaces what the mainstream misses.
-- **Don't soften citation requirements:** 216+ sources, 3+ per claim, inline [N] on every fact. Non-negotiable.
+- **Don't soften citation requirements:** 216+ sources (Level 1 target >=216, BFS expansion fallback), 3+ per claim, inline [N] on every fact. Non-negotiable.
 
 ---
 
