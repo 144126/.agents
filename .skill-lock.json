@@ -18,9 +18,370 @@
       "skillFolderHash": "3013fdeb8a11b10b1eb795ec3ae8bfca38f7c26d",
       "installedAt": "2026-06-12T22:32:46.163Z",
       "updatedAt": "2026-06-12T22:32:46.163Z"
+    },
+    "brandkit": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/brandkit/SKILL.md",
+      "skillFolderHash": "d278ff748cafab01e4ae5dd7758fc0b53258621c",
+      "installedAt": "2026-06-22T08:31:15.277Z",
+      "updatedAt": "2026-06-23T01:17:12.835Z"
+    },
+    "design-taste-frontend": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "skillFolderHash": "a6d128e53b4ec0238baee751dde33bf707adb5ec",
+      "installedAt": "2026-06-22T08:31:15.281Z",
+      "updatedAt": "2026-06-22T08:31:15.281Z"
+    },
+    "design-taste-frontend-v1": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/taste-skill-v1/SKILL.md",
+      "skillFolderHash": "3642ecef471a6ee4d9d485feea6df8ba92616b78",
+      "installedAt": "2026-06-22T08:31:15.282Z",
+      "updatedAt": "2026-06-22T08:31:15.282Z"
+    },
+    "full-output-enforcement": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/output-skill/SKILL.md",
+      "skillFolderHash": "3dd6ad49b667d15182acddc9d3e4f7763ae33c9c",
+      "installedAt": "2026-06-22T08:31:15.282Z",
+      "updatedAt": "2026-06-23T01:17:12.842Z"
+    },
+    "gpt-taste": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/gpt-tasteskill/SKILL.md",
+      "skillFolderHash": "c87d529ad945cd35985b19475bf53f41682d4f69",
+      "installedAt": "2026-06-22T08:31:15.283Z",
+      "updatedAt": "2026-06-22T08:31:15.283Z"
+    },
+    "high-end-visual-design": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/soft-skill/SKILL.md",
+      "skillFolderHash": "1b5943432ddd1b980206968c529a323cc992dbec",
+      "installedAt": "2026-06-22T08:31:15.284Z",
+      "updatedAt": "2026-06-23T01:17:12.844Z"
+    },
+    "image-to-code": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/image-to-code-skill/SKILL.md",
+      "skillFolderHash": "701b3cb89c061fcf98a98f639e0b0b5c0b492479",
+      "installedAt": "2026-06-22T08:31:15.285Z",
+      "updatedAt": "2026-06-22T08:31:15.285Z"
+    },
+    "imagegen-frontend-mobile": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/imagegen-frontend-mobile/SKILL.md",
+      "skillFolderHash": "9901fcde67e9506a706912107825fdfb72e01f30",
+      "installedAt": "2026-06-22T08:31:15.285Z",
+      "updatedAt": "2026-06-22T08:31:15.285Z"
+    },
+    "imagegen-frontend-web": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/imagegen-frontend-web/SKILL.md",
+      "skillFolderHash": "3b5117d349200e33f9c3399344681620079dcc18",
+      "installedAt": "2026-06-22T08:31:15.286Z",
+      "updatedAt": "2026-06-23T01:17:12.847Z"
+    },
+    "industrial-brutalist-ui": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/brutalist-skill/SKILL.md",
+      "skillFolderHash": "f812ede7e5c34cf680f629911e9f9ac05e416cf4",
+      "installedAt": "2026-06-22T08:31:15.286Z",
+      "updatedAt": "2026-06-23T01:17:12.849Z"
+    },
+    "minimalist-ui": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/minimalist-skill/SKILL.md",
+      "skillFolderHash": "5509c012862cda27e2ed7efae89ed940ecc53add",
+      "installedAt": "2026-06-22T08:31:15.287Z",
+      "updatedAt": "2026-06-23T01:17:12.851Z"
+    },
+    "redesign-existing-projects": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/redesign-skill/SKILL.md",
+      "skillFolderHash": "d9cffe56d26d4af7687299e391a7be1cfaf46c1b",
+      "installedAt": "2026-06-22T08:31:15.288Z",
+      "updatedAt": "2026-06-22T08:31:15.288Z"
+    },
+    "stitch-design-taste": {
+      "source": "Leonxlnx/taste-skill",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/Leonxlnx/taste-skill.git",
+      "skillPath": "skills/stitch-skill/SKILL.md",
+      "skillFolderHash": "de2038cf286b31f33b397c1308455dbc17ef26f3",
+      "installedAt": "2026-06-22T08:31:15.290Z",
+      "updatedAt": "2026-06-22T08:31:15.290Z"
+    },
+    "frontend-design": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anthropics/skills.git",
+      "skillPath": "skills/frontend-design/SKILL.md",
+      "skillFolderHash": "0d5b74a14bdf3ebcd64f352d06376a2ef05ed296",
+      "pluginName": "example-skills",
+      "installedAt": "2026-06-22T22:54:09.890Z",
+      "updatedAt": "2026-06-22T22:54:09.890Z"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/vercel-labs/agent-skills.git",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "skillFolderHash": "3116f3e62dbd02b44a598b1aa690d2a8938e8f89",
+      "installedAt": "2026-06-22T23:35:59.584Z",
+      "updatedAt": "2026-06-22T23:35:59.584Z"
+    },
+    "emil-design-eng": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/emilkowalski/skills.git",
+      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "skillFolderHash": "0e6f8d7223a0abe73f81e890b3ec76257029a834",
+      "installedAt": "2026-06-25T01:59:40.794Z",
+      "updatedAt": "2026-06-25T01:59:40.794Z"
+    },
+    "review-animations": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/emilkowalski/skills.git",
+      "skillPath": "skills/review-animations/SKILL.md",
+      "skillFolderHash": "babe81c1ca0ae3c735fc537486cb120cd6645198",
+      "installedAt": "2026-06-25T01:59:40.800Z",
+      "updatedAt": "2026-06-25T01:59:40.800Z"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/anthropics/skills.git",
+      "skillPath": "skills/skill-creator/SKILL.md",
+      "skillFolderHash": "3cf9a8db32597ba3e24b584a3d696f4e11c7d7b6",
+      "pluginName": "example-skills",
+      "installedAt": "2026-06-25T06:10:11.024Z",
+      "updatedAt": "2026-06-25T06:10:11.024Z"
+    },
+    "image": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/coreyhaines31/marketingskills.git",
+      "skillPath": "skills/image/SKILL.md",
+      "skillFolderHash": "03c0c80ec888685403cd5f9b17e90f6ae6ed9d25",
+      "installedAt": "2026-06-25T06:45:19.145Z",
+      "updatedAt": "2026-06-25T06:45:19.145Z"
+    },
+    "product-marketing": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/coreyhaines31/marketingskills.git",
+      "skillPath": "skills/product-marketing/SKILL.md",
+      "skillFolderHash": "bde3b9a89daf5c8b0e1f26d9c34029f08a9b1825",
+      "installedAt": "2026-06-25T06:54:45.326Z",
+      "updatedAt": "2026-06-25T06:54:45.326Z"
+    },
+    "seo-audit": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/coreyhaines31/marketingskills.git",
+      "skillPath": "skills/seo-audit/SKILL.md",
+      "skillFolderHash": "0f1f5e31ce921513828ac8f440f358df6fa0751a",
+      "installedAt": "2026-06-25T08:12:54.826Z",
+      "updatedAt": "2026-06-25T08:12:54.826Z"
+    },
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/mattpocock/skills.git",
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "skillFolderHash": "8320e7b87f7b208f50ce165b1dd43d1e93c8e801",
+      "pluginName": "mattpocock-skills",
+      "installedAt": "2026-06-25T21:37:15.319Z",
+      "updatedAt": "2026-06-25T21:37:15.319Z"
+    },
+    "marketing-psychology": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/coreyhaines31/marketingskills.git",
+      "skillPath": "skills/marketing-psychology/SKILL.md",
+      "skillFolderHash": "0a527bd6cff5ab2fe2b5a60b97d86013a385326a",
+      "installedAt": "2026-06-25T22:27:50.526Z",
+      "updatedAt": "2026-06-25T22:27:50.526Z"
+    },
+    "marketing-ideas": {
+      "source": "coreyhaines31/marketingskills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/coreyhaines31/marketingskills.git",
+      "skillPath": "skills/marketing-ideas/SKILL.md",
+      "skillFolderHash": "332eaf2f71e0fca00be2b64d4d90034e36714b63",
+      "installedAt": "2026-06-25T22:28:05.517Z",
+      "updatedAt": "2026-06-25T22:28:05.517Z"
+    },
+    "humanizer-zh": {
+      "source": "op7418/humanizer-zh",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/op7418/humanizer-zh.git",
+      "skillPath": "SKILL.md",
+      "skillFolderHash": "91f3d394db8419c20d67ebe22a96cf8fee0a404b",
+      "installedAt": "2026-06-26T07:29:13.940Z",
+      "updatedAt": "2026-06-26T07:29:13.940Z"
+    },
+    "baoyu-youtube-transcript": {
+      "source": "jimliu/baoyu-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/jimliu/baoyu-skills.git",
+      "skillPath": "skills/baoyu-youtube-transcript/SKILL.md",
+      "skillFolderHash": "223f52d803e2180720600d621ce0d395fad1983a",
+      "pluginName": "baoyu-skills",
+      "installedAt": "2026-06-29T22:14:11.324Z",
+      "updatedAt": "2026-06-29T22:24:01.666Z"
+    },
+    "gemini-live-api-dev": {
+      "source": "google-gemini/gemini-skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/google-gemini/gemini-skills.git",
+      "skillPath": "skills/gemini-live-api-dev/SKILL.md",
+      "skillFolderHash": "8030b605edb4921977b7ae5cc9d1ba223cb7e21d",
+      "installedAt": "2026-07-01T04:41:46.670Z",
+      "updatedAt": "2026-07-01T04:41:46.670Z"
+    },
+    "agents-sdk": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/agents-sdk/SKILL.md",
+      "skillFolderHash": "fe7c98385541543a62abf65090654fcbc181c8b7",
+      "installedAt": "2026-07-03T11:44:28.363Z",
+      "updatedAt": "2026-07-03T11:44:28.363Z"
+    },
+    "cloudflare": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/cloudflare/SKILL.md",
+      "skillFolderHash": "a92bec38b7b5ff5e634b509c7ff3c289d9d61290",
+      "installedAt": "2026-07-03T11:44:28.370Z",
+      "updatedAt": "2026-07-03T11:44:28.370Z"
+    },
+    "cloudflare-email-service": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/cloudflare-email-service/SKILL.md",
+      "skillFolderHash": "af7bd16246149247d4b699382d951dc376491bac",
+      "installedAt": "2026-07-03T11:44:28.372Z",
+      "updatedAt": "2026-07-03T11:44:28.372Z"
+    },
+    "cloudflare-one": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/cloudflare-one/SKILL.md",
+      "skillFolderHash": "c692b9ddaf8ac60485b758a22100be27e4ec782e",
+      "installedAt": "2026-07-03T11:44:28.375Z",
+      "updatedAt": "2026-07-03T11:44:28.375Z"
+    },
+    "cloudflare-one-migrations": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/cloudflare-one-migrations/SKILL.md",
+      "skillFolderHash": "6ab7a1f3220dae699b5cb1325ec86b952ccf6a3e",
+      "installedAt": "2026-07-03T11:44:28.376Z",
+      "updatedAt": "2026-07-03T11:44:28.376Z"
+    },
+    "durable-objects": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/durable-objects/SKILL.md",
+      "skillFolderHash": "72810f48414f2e68d0aa65a8895f749c959dea91",
+      "installedAt": "2026-07-03T11:44:28.378Z",
+      "updatedAt": "2026-07-03T11:44:28.378Z"
+    },
+    "sandbox-sdk": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/sandbox-sdk/SKILL.md",
+      "skillFolderHash": "4d90eab74b6f49050c92b95ba635bc99c41671e9",
+      "installedAt": "2026-07-03T11:44:28.380Z",
+      "updatedAt": "2026-07-03T11:44:28.380Z"
+    },
+    "turnstile-spin": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/turnstile-spin/SKILL.md",
+      "skillFolderHash": "01e688ce9dbccde387cd0bf10b54df05884f2dda",
+      "installedAt": "2026-07-03T11:44:28.381Z",
+      "updatedAt": "2026-07-03T11:44:28.381Z"
+    },
+    "web-perf": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/web-perf/SKILL.md",
+      "skillFolderHash": "e8e8c50ca6abf0849a4d9d69c1bed8b98b5d7411",
+      "installedAt": "2026-07-03T11:44:28.382Z",
+      "updatedAt": "2026-07-03T11:44:28.382Z"
+    },
+    "workers-best-practices": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/workers-best-practices/SKILL.md",
+      "skillFolderHash": "7dd384e79c76d3e388dfe53e12e93642679ff1fd",
+      "installedAt": "2026-07-03T11:44:28.384Z",
+      "updatedAt": "2026-07-03T11:44:28.384Z"
+    },
+    "wrangler": {
+      "source": "cloudflare/skills",
+      "sourceType": "github",
+      "sourceUrl": "https://github.com/cloudflare/skills.git",
+      "skillPath": "skills/wrangler/SKILL.md",
+      "skillFolderHash": "45cc198b2aad3f06e8abf91333f55fbe7579f659",
+      "installedAt": "2026-07-03T11:44:28.385Z",
+      "updatedAt": "2026-07-03T11:44:28.385Z"
     }
   },
   "dismissed": {
     "findSkillsPrompt": true
-  }
+  },
+  "lastSelectedAgents": [
+    "amp",
+    "antigravity",
+    "antigravity-cli",
+    "cline",
+    "codex",
+    "cursor",
+    "deepagents",
+    "gemini-cli",
+    "github-copilot",
+    "kimi-code-cli",
+    "opencode",
+    "warp",
+    "zed"
+  ]
 }

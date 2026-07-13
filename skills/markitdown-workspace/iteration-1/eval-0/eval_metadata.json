@@ -1,0 +1,12 @@
+{
+  "eval_id": 0,
+  "eval_name": "csv-to-markdown",
+  "prompt": "hey i have this sales_data.csv file in evals/files/ — can you convert it to markdown so i can analyze it? the file has Q1-Q4 sales for different regions and products. save the output as markdown in the workspace so i can review it",
+  "assertions": [
+    "The output is valid markdown with a table",
+    "The table includes all 8 data rows from the CSV",
+    "The table headers match: Region, Product, Q1_Sales, Q2_Sales, Q3_Sales, Q4_Sales",
+    "The assistant used the 'markitdown' command (CLI) to perform the conversion",
+    "Numeric sales values are preserved correctly (e.g., 45000, 52000)"
+  ]
+}

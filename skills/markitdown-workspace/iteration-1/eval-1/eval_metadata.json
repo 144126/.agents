@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "html-to-markdown",
+  "prompt": "i downloaded this article as article.html in evals/files/ — can you extract the text content from it as markdown? save the output in the workspace",
+  "assertions": [
+    "The output is valid markdown",
+    "The title 'The Rise of AI-Powered Code Assistants' appears in the output",
+    "The table of tools (GitHub Copilot, Codeium, Amazon CodeWhisperer) is preserved",
+    "The numbered list under Best Practices is preserved",
+    "The assistant used the 'markitdown' command (CLI) to convert the HTML file"
+  ]
+}

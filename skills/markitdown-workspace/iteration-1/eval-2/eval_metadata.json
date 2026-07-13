@@ -1,0 +1,11 @@
+{
+  "eval_id": 2,
+  "eval_name": "batch-directory-conversion",
+  "prompt": "can you batch convert all the files in evals/files/ to markdown? i have a mix of csv and html files there. save each output as a separate .md file in the workspace",
+  "assertions": [
+    "Two .md files are created in the workspace (one per input file)",
+    "The markdown outputs correctly reflect each source file's content",
+    "The assistant used the 'markitdown' command (CLI) for each conversion",
+    "The original files in evals/files/ are unchanged"
+  ]
+}

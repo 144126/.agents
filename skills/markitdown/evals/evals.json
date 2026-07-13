@@ -1,0 +1,43 @@
+{
+  "skill_name": "markitdown",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "hey i have this sales_data.csv file in evals/files/ — can you convert it to markdown so i can analyze it? the file has Q1-Q4 sales for different regions and products. save the output as markdown in the workspace so i can review it",
+      "expected_output": "A markdown table with the CSV data converted using markitdown",
+      "files": ["evals/files/sales_data.csv"],
+      "expectations": [
+        "The output is valid markdown with a table",
+        "The table includes all 8 data rows from the CSV",
+        "The table headers match: Region, Product, Q1_Sales, Q2_Sales, Q3_Sales, Q4_Sales",
+        "The assistant used the 'markitdown' command (CLI) to perform the conversion",
+        "Numeric sales values are preserved correctly (e.g., 45000, 52000)"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "i downloaded this article as article.html in evals/files/ — can you extract the text content from it as markdown? save the output in the workspace",
+      "expected_output": "Markdown output of the HTML article with headings, lists, and table preserved",
+      "files": ["evals/files/article.html"],
+      "expectations": [
+        "The output is valid markdown",
+        "The title 'The Rise of AI-Powered Code Assistants' appears in the output",
+        "The table of tools (GitHub Copilot, Codeium, Amazon CodeWhisperer) is preserved",
+        "The numbered list under Best Practices is preserved",
+        "The assistant used the 'markitdown' command (CLI) to convert the HTML file"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "can you batch convert all the files in evals/files/ to markdown? i have a mix of csv and html files there. save each output as a separate .md file in the workspace",
+      "expected_output": "Multiple .md files in the workspace, one per input file",
+      "files": ["evals/files/sales_data.csv", "evals/files/article.html"],
+      "expectations": [
+        "Two .md files are created in the workspace (one per input file)",
+        "The markdown outputs correctly reflect each source file's content",
+        "The assistant used the 'markitdown' command (CLI) for each conversion",
+        "The original files in evals/files/ are unchanged"
+      ]
+    }
+  ]
+}
