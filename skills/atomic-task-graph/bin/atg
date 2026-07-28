@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 -c 'import sys,runpy;sys.path.insert(0,sys.argv.pop(1));runpy.run_module("atg.cli",run_name="__main__")' "$here" "$@"

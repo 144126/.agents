@@ -1,0 +1,36 @@
+# atg/1 rev=G003 parent=G002 refined=N3
+
+task: check tomorrow's weather in beijing, give travel advice
+
+node N1
+  goal: fetch tomorrow's forecast for beijing
+  tool: weather_api
+  in:   city = "beijing", date = $task.date
+  out:  forecast
+
+node N2
+  goal: confirm the city name resolves to exactly one place
+  tool: geocode
+  in:   q = "beijing"
+  out:  place_id
+
+node N3.1
+  goal: pull the fields that drive advice out of the forecast
+  tool: json_extract
+  in:   src = $N1.forecast, place = $N2.place_id
+  out:  temp_c, precip_mm, wind_kph
+
+node N3.2
+  goal: decide umbrella and clothing from the extracted conditions
+  tool: llm_judge
+  in:   t = $N3.1.temp_c, p = $N3.1.precip_mm, w = $N3.1.wind_kph
+  out:  advice
+
+node N4
+  goal: write the final travel advice for the user
+  tool: compose
+  in:   advice = $N3.advice, forecast = $N1.forecast
+  out:  answer
+
+exports N3
+  advice = $N3.2.advice

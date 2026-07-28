@@ -1,0 +1,38 @@
+# atg/1 rev=G002 parent=G001 refined=N2 kind=repair note="second attempt at the fridge"
+
+task: put a cool egg on the countertop
+
+node N1
+  goal: walk to the fridge
+  tool: go_to
+  in:   target = "fridge 1"
+  out:  location
+
+node N2.1
+  goal: open the fridge door before reaching inside
+  tool: open
+  in:   target = "fridge 1"
+  out:  opened
+  after: N1
+
+node N2.2
+  goal: take the egg now that the door is open
+  tool: take
+  in:   obj = "egg 1", src = "fridge 1", door = $N2.1.opened
+  out:  held
+  from: N2
+  note: previous attempt failed because the door was shut
+
+node N3
+  goal: carry the egg to the countertop and put it down
+  tool: put
+  in:   obj = $N2.held, dest = "countertop 1", approach = "slow", grip = "gentle"
+  out:  placed
+  run:  <<<
+    echo "put egg on countertop"
+    exit 0
+  >>>
+  timeout: 45
+
+exports N2
+  held = $N2.2.held
