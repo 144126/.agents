@@ -63,6 +63,23 @@ def common_ancestor(node_ids):
     return "N" + ".".join(str(p) for p in shared)
 
 
+def walk(links, start):
+    seen = set()
+    stack = list(links.get(start, ()))
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(links.get(current, ()))
+    seen.discard(start)
+    return seen
+
+
+def id_subtree(node_ids, root_id):
+    return sorted([i for i in node_ids if is_descendant(i, root_id)], key=id_sort_key)
+
+
 class Ref(object):
     __slots__ = ("target", "field")
 
@@ -257,6 +274,14 @@ class Graph(object):
             succ[src].add(dst)
             pred[dst].add(src)
         return pred, succ
+
+    def ancestors(self, node_id):
+        pred, _succ = self.adjacency()
+        return sorted(walk(pred, node_id), key=id_sort_key)
+
+    def descendants(self, node_id):
+        _pred, succ = self.adjacency()
+        return sorted(walk(succ, node_id), key=id_sort_key)
 
     def preds(self, node_id):
         pred, _succ = self.adjacency()

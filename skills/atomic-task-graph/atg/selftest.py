@@ -275,6 +275,588 @@ def t_document_reader_handles_tool_blocks():
     assert dict((n, v) for n, v, _l in block.fields)["in"] == "city:str!, date:str!"
 
 
+import shutil
+import tempfile
+
+from . import compile as compiler
+from . import repair as repairer
+from .check import run_check
+from .errors import BudgetError, FrozenError
+from .execute import loop
+from .metrics import collect
+from .render import render
+from .schedule import frontier_widths, ready_report
+from .store import create_run, parse_budgets, resolve_run
+from .tools import parse_registry
+
+TOOLS = os.path.join(FIXTURES, "selftest_tools.atg")
+
+R0 = """node 1
+  goal: fetch raw data
+  tool: shell
+  in:   cmd = "echo 42"
+  out:  raw
+  run:  echo 42
+
+node 2
+  goal: turn raw data into the answer
+  in:   raw = $N1.raw
+  out:  answer
+
+exports N0
+  answer = $N2.answer
+"""
+
+R2_BAD = """node 1
+  goal: clean it
+  tool: shell
+  in:   raw = $N1.raw
+  out:  clean
+  run:  echo clean
+
+node 2
+  goal: phrase it
+  tool: shell
+  in:   clean = $1.clean
+  out:  answer
+  run:  exit 3
+
+exports N2
+  answer = $N2.2.answer
+"""
+
+R2_FIX = R2_BAD.replace("run:  exit 3", 'run:  echo "answer is $N2.1.clean"').replace(
+    "out:  clean\n  run:  echo clean", "out:  clean\n  from: N2.1\n  run:  echo clean")
+
+
+class sandbox(object):
+    def __init__(self, task="report the weather", tools=True):
+        self.task = task
+        self.tools = tools
+
+    def __enter__(self):
+        self.dir = tempfile.mkdtemp(prefix="atg-selftest-")
+        self.run = create_run(self.task, outputs=["answer"],
+                              tools_path=TOOLS if self.tools else None,
+                              root=self.dir)
+        return self.run
+
+    def __exit__(self, *exc):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def compiled_run(box):
+    compiler.refine(box, ROOT_ID, R0)
+    compiler.refine(box, "N2", R2_BAD)
+    return box
+
+
+@case
+def t_registry_parses_template():
+    with open(TOOLS, "r") as handle:
+        registry = parse_registry(handle.read(), TOOLS)
+    assert "shell" in registry.tools
+    assert [p.name for p in registry.tools["shell"].ins] == ["cmd", "raw", "clean"]
+
+
+@case
+def t_budget_parsing():
+    assert parse_budgets(["max_depth=3"]) == {"max_depth": 3}
+    for bad in (["nope=1"], ["max_depth"], ["max_depth=x"], ["max_depth=0"]):
+        try:
+            parse_budgets(bad)
+        except AtgError:
+            continue
+        raise AssertionError("accepted bad budget %r" % bad)
+
+
+@case
+def t_run_creation_and_resolution():
+    with sandbox() as box:
+        assert box.head() == "G000"
+        assert box.read_revision().nodes[ROOT_ID].outs == ["answer"]
+        assert resolve_run(root=os.path.dirname(box.path)).id == box.id
+        first = box.append_event("probe")["seq"]
+        assert box.append_event("probe")["seq"] == first + 1
+
+
+@case
+def t_refine_normalizes_local_ids():
+    with sandbox() as box:
+        out = compiler.refine(box, ROOT_ID, R0)
+        assert out["added"] == ["N1", "N2"]
+        graph = box.read_revision()
+        assert graph.rev == "G001" and graph.refined == ROOT_ID
+        assert graph.nodes["N2"].binding("raw").value.text() == "$N1.raw"
+        out = compiler.refine(box, "N2", R2_BAD)
+        assert out["added"] == ["N2.1", "N2.2"]
+        graph = box.read_revision()
+        assert graph.nodes["N2.2"].binding("clean").value.text() == "$N2.1.clean"
+        assert graph.resolve_ref(Ref("N2", "answer")) == ("N2.2", "answer")
+
+
+@case
+def t_interface_violations():
+    cases = [
+        ("node 1\n  tool: shell\n  in: x = $N2.answer\n  out: answer\n  run: true\n"
+         "\nexports N2\n  answer = $N2.1.answer\n", "E_IFACE_SELF"),
+        ("node 1\n  tool: shell\n  in: x = $N9.nope\n  out: answer\n  run: true\n"
+         "\nexports N2\n  answer = $N2.1.answer\n", "E_IFACE_INPUT"),
+        ("node 1\n  tool: shell\n  in: raw = $N1.raw\n  out: other\n  run: true\n",
+         "E_IFACE_OUTPUT"),
+        ("node N7\n  tool: shell\n  in: raw = $N1.raw\n  out: answer\n  run: true\n"
+         "\nexports N2\n  answer = $N7.answer\n", "E_IFACE_SCOPE"),
+    ]
+    for text, code in cases:
+        with sandbox() as box:
+            compiler.refine(box, ROOT_ID, R0)
+            try:
+                compiler.refine(box, "N2", text)
+            except AtgError as err:
+                codes = [i.code for i in (err.issues or [])] + [err.code]
+                assert code in codes, "expected %s, got %s" % (code, codes)
+            else:
+                raise AssertionError("%s was accepted" % code)
+
+
+@case
+def t_interface_warnings():
+    with sandbox() as box:
+        compiler.refine(box, ROOT_ID, R0)
+        text = ("node 1\n  tool: shell\n  in: raw = $N1.raw\n  out: answer\n  run: true\n"
+                "\nnode 2\n  tool: shell\n  in: raw = $N1.raw\n  out: spare\n  run: true\n"
+                "\nexports N2\n  answer = $1.answer\n  extra = $N2.2.spare\n")
+        out = compiler.refine(box, "N2", text)
+        codes = set(i["class"] for i in out["issues"])
+        assert "W_IFACE_WIDE" in codes, codes
+
+
+@case
+def t_budget_refusal():
+    with sandbox() as box:
+        box.save_meta(dict(box.meta(), budgets={"max_fanout": 1}))
+        try:
+            compiler.refine(box, ROOT_ID, R0)
+        except BudgetError:
+            return
+        raise AssertionError("fanout budget not enforced")
+
+
+@case
+def t_scheduler_frontiers():
+    with sandbox() as box:
+        compiled_run(box)
+        graph = box.read_revision()
+        report = ready_report(box, graph)
+        assert [n["id"] for n in report["nodes"]] == ["N1"]
+        assert report["frontier"] == 0
+        assert [w["id"] for w in report["waiting"]] == ["N2.1", "N2.2"]
+
+
+@case
+def t_check_clean_and_dirty():
+    with sandbox() as box:
+        compiled_run(box)
+        clean = run_check(box)
+        assert clean["exit"] == 0, clean["issues"]
+        broken = box.read_revision()
+        broken.nodes["N2.1"].tool = "no_such_tool"
+        box.write_revision(broken)
+        result = run_check(box)
+        assert result["exit"] != 0
+        assert "X_TOOL" in [i.code for i in result["issues"]], result["issues"]
+
+
+@case
+def t_execute_repair_reuse_and_freeze():
+    with sandbox() as box:
+        compiled_run(box)
+        loop(box)
+        states = box.node_states()
+        assert states["N1"].status == "done" and states["N2.2"].status == "failed"
+
+        blamed = repairer.blame(box)
+        assert blamed["failed"] == ["N2.2"]
+        assert blamed["lca"] == "N2" and blamed["frozen"] == ["N1"]
+        assert blamed["boundary_inputs"]["$N1.raw"] == "42"
+        assert blamed["reusable_outputs"]["N2.1.clean"] == "clean"
+
+        data = compiler.context(box, "N2", repair=True)
+        assert data["node"]["out"] == ["answer"]
+        assert data["node"]["in"] == ["raw = $N1.raw"]
+
+        try:
+            compiler.refine(box, "N2", R2_FIX, allow_atomic=True, frozen=set(["N2.1"]))
+        except FrozenError:
+            pass
+        else:
+            raise AssertionError("a frozen node was rewritten")
+
+        out = repairer.repair(box, "N2", R2_FIX)
+        assert out["reused"] == ["N2.1"], out["reused"]
+        assert out["frozen"] == ["N1"]
+        loop(box)
+        states = box.node_states()
+        assert set(s.status for s in states.values()) == set(["done"])
+
+        data = collect(box)
+        assert data["repairs"] == 1 and data["reused_outputs"] == 1
+        assert data["failure_precision"] == "n/a"
+        assert data["frozen_not_rerun"] == 1
+        assert data["steps"] == 3
+
+
+@case
+def t_lca_prefix_vs_history():
+    assert repairer.prefix_ancestor(["N3.2"]) == "N3"
+    assert repairer.prefix_ancestor(["N3.1", "N3.2"]) == "N3"
+    assert repairer.prefix_ancestor(["N1", "N3.2"]) == ROOT_ID
+
+
+@case
+def t_render_formats():
+    with sandbox() as box:
+        compiled_run(box)
+        graph = box.read_revision()
+        states = box.node_states(graph)
+        mermaid = render(graph, states, "mermaid", status=True)
+        assert mermaid.startswith("flowchart") and "N2.1" in mermaid
+        assert "digraph" in render(graph, states, "dot")
+        assert "rank 0" in render(graph, states, "ascii")
+        assert "| node |" in render(graph, states, "md").lower()
+
+
+@case
+def t_refined_away_ancestor_has_an_interface():
+    with sandbox() as box:
+        compiled_run(box)
+        graph = box.read_revision()
+        assert "N2" not in graph.nodes
+        node = compiler.live_node(graph, "N2")
+        assert node.outs == ["answer"]
+        assert [b.value.text() for b in node.ins] == ["$N1.raw"]
+        assert compiler.live_node(graph, "N9") is None
+
+
+WEATHER_TOOLS = os.path.join(FIXTURES, "weather_tools.atg")
+
+FIG3_ROOT = """node 1
+  goal: fetch tomorrow's forecast for the city
+  tool: weather_api
+  in:   city = $task.city, date = $task.date
+  out:  forecast
+  run:  echo '{"forecast": "rain 3mm"}'
+
+node 2
+  goal: confirm the city name resolves to exactly one place
+  tool: geocode
+  in:   q = $task.city
+  out:  place_id
+  run:  echo beijing-1
+
+node 3
+  goal: turn the forecast into travel advice
+  in:   src = $N1.forecast, place = $N2.place_id
+  out:  advice
+
+node 4
+  goal: write the final travel advice for the user
+  tool: compose
+  in:   advice = $N3.advice, forecast = $N1.forecast
+  out:  answer
+  run:  echo "take an umbrella: $N3.advice"
+
+exports N0
+  answer = $N4.answer
+"""
+
+FIG3_N3 = """node 1
+  goal: pull the fields that drive advice out of the forecast
+  tool: json_extract
+  in:   src = $N1.forecast
+  out:  temp_c
+  run:  echo 14
+
+node 2
+  goal: name the place the forecast is for
+  tool: label
+  in:   place = $N2.place_id
+  out:  place_name
+  run:  echo beijing
+
+node 3
+  goal: decide umbrella and clothing from the extracted conditions
+  tool: llm_judge
+  in:   t = $1.temp_c, p = $2.place_name
+  out:  advice
+  run:  exit 1
+
+exports N3
+  advice = $3.advice
+"""
+
+FIG3_FIX = FIG3_N3.replace("run:  echo 14", "from: N3.1\n  run:  echo 14").replace(
+    "run:  echo beijing\n", "from: N3.2\n  run:  echo beijing\n").replace(
+    "run:  exit 1", 'run:  echo "umbrella in $N3.2.place_name at $N3.1.temp_c C"')
+
+
+@case
+def t_end_to_end_figure_3():
+    with sandbox(task="check tomorrow's weather in beijing, give travel advice",
+                 tools=False) as box:
+        shutil.copyfile(WEATHER_TOOLS, box.tools_path)
+        box.save_meta(dict(box.meta(), inputs={"city": "beijing", "date": "tomorrow"}))
+
+        compiler.refine(box, ROOT_ID, FIG3_ROOT)
+        assert box.read_revision().open_nodes() == ["N3"]
+        compiler.refine(box, "N3", FIG3_N3)
+        graph = box.read_revision()
+        assert graph.open_nodes() == []
+        assert graph.node_ids() == ["N1", "N2", "N3.1", "N3.2", "N3.3", "N4"]
+        assert graph.resolve_ref(Ref("N3", "advice")) == ("N3.3", "advice")
+
+        clean = run_check(box)
+        assert clean["exit"] == 0, [i.message for i in clean["issues"]]
+        assert [r for r in box.events(("check_pass",))][-1]["phase"] == "pre_exec"
+
+        result = loop(box)
+        assert result["status"] == "blocked"
+        states = box.node_states()
+        assert [states[i].status for i in ("N1", "N2", "N3.1", "N3.2")] == ["done"] * 4
+        assert states["N3.3"].status == "failed" and states["N4"].status == "pending"
+        assert [s["frontier"] for s in result["steps"]] == [0, 1, 2]
+
+        blamed = repairer.blame(box)
+        assert blamed["failed"] == ["N3.3"]
+        assert blamed["lca"] == "N3", blamed
+        assert blamed["lca_by_prefix"] == blamed["lca_by_history"]
+        assert blamed["scope"] == ["N3.1", "N3.2", "N3.3"]
+        assert blamed["frozen"] == ["N1", "N2", "N4"]
+        assert blamed["boundary_inputs"] == {"$N1.forecast": "rain 3mm",
+                                             "$N2.place_id": "beijing-1"}
+        assert sorted(blamed["reusable_outputs"]) == ["N3.1.temp_c", "N3.2.place_name"]
+
+        before = dict((i, box.read_revision().nodes[i]) for i in ("N1", "N2", "N4"))
+        out = repairer.repair(box, "N3", FIG3_FIX)
+        assert out["reused"] == ["N3.1", "N3.2"], out["reused"]
+        assert out["frozen"] == ["N1", "N2", "N4"]
+        after = box.read_revision()
+        for node_id, node in before.items():
+            assert serialize_node(after.nodes[node_id]) == serialize_node(node)
+
+        result = loop(box)
+        assert result["status"] == "done", result
+        assert result["outputs"]["answer"].startswith("take an umbrella: umbrella in beijing")
+        states = box.node_states()
+        assert set(s.status for s in states.values()) == set(["done"])
+
+        data = collect(box)
+        assert data["steps"] == 4 and data["frontier_widths"] == [2, 2, 1, 1]
+        assert data["serial_steps"] == 6
+        assert data["repairs"] == 1 and data["repair_success_rate"] == 1.0
+        assert data["reused_outputs"] == 2
+        assert data["saved_environment_interactions"] >= 2
+        assert data["failure_precision"] == "n/a"
+        assert data["hallucinatory_trajectory"] is True
+
+
+def serialize_node(node):
+    return (node.id, node.goal, node.tool, [b.text() for b in node.ins], list(node.outs),
+            node.run)
+
+
+@case
+def t_frozen_downstream_still_runs():
+    with sandbox(task="repair must not deadlock the nodes it froze", tools=False) as box:
+        shutil.copyfile(WEATHER_TOOLS, box.tools_path)
+        box.save_meta(dict(box.meta(), inputs={"city": "beijing", "date": "tomorrow"}))
+        compiler.refine(box, ROOT_ID, FIG3_ROOT)
+        compiler.refine(box, "N3", FIG3_N3)
+        loop(box)
+        repairer.repair(box, "N3", FIG3_FIX)
+        states = box.node_states()
+        assert states["N4"].frozen is True and states["N4"].status == "pending"
+        assert states["N1"].frozen is True and states["N1"].status == "done"
+        assert [n["id"] for n in ready_report(box)["nodes"]] == ["N3.3"]
+        assert loop(box)["status"] == "done"
+        assert box.node_states()["N4"].status == "done"
+
+
+SHAPE_HEAD = """node 1
+  tool: shell
+  in:   cmd = "a"
+  out:  a
+"""
+
+
+def shape(body, answer):
+    return SHAPE_HEAD + body + "\nexports N0\n  answer = $%s.answer\n" % answer
+
+
+CHAIN = shape("""
+node 2
+  tool: shell
+  in:   raw = $1.a
+  out:  b
+
+node 3
+  tool: shell
+  in:   raw = $2.b
+  out:  answer
+""", "N3")
+
+DIAMOND = shape("""
+node 2
+  tool: shell
+  in:   raw = $1.a
+  out:  b
+
+node 3
+  tool: shell
+  in:   raw = $1.a
+  out:  c
+
+node 4
+  tool: shell
+  in:   raw = $2.b, clean = $3.c
+  out:  answer
+""", "N4")
+
+FANOUT = shape("""
+node 2
+  tool: shell
+  in:   raw = $1.a
+  out:  b
+
+node 3
+  tool: shell
+  in:   raw = $1.a
+  out:  c
+
+node 4
+  tool: shell
+  in:   raw = $1.a
+  out:  d
+
+node 5
+  tool: shell
+  in:   raw = $2.b, clean = $3.c
+  out:  answer
+""", "N5")
+
+AFTER_ONLY = shape("""
+node 2
+  tool: shell
+  in:   cmd = "b"
+  out:  answer
+  after: N1
+""", "N2")
+
+CYCLIC = """node 1
+  tool: shell
+  in:   raw = $2.b
+  out:  a
+
+node 2
+  tool: shell
+  in:   raw = $1.a
+  out:  answer
+
+exports N0
+  answer = $N2.answer
+"""
+
+
+def drain(box, graph):
+    states = box.node_states(graph)
+    widths = []
+    while True:
+        report = ready_report(box, graph, states)
+        if not report["nodes"]:
+            return widths
+        widths.append(len(report["nodes"]))
+        for entry in report["nodes"]:
+            box.append_event("done", node=entry["id"], frontier=report["frontier"],
+                             out=dict((f, "v") for f in entry["out"]))
+        states = box.node_states(graph)
+
+
+@case
+def t_scheduler_shapes():
+    for name, text, expected in (("chain", CHAIN, [1, 1, 1]),
+                                 ("diamond", DIAMOND, [1, 2, 1]),
+                                 ("fanout", FANOUT, [1, 3, 1]),
+                                 ("after_only", AFTER_ONLY, [1, 1])):
+        with sandbox() as box:
+            compiler.refine(box, ROOT_ID, text)
+            graph = box.read_revision()
+            assert drain(box, graph) == expected, name
+            assert frontier_widths(graph, box.node_states(graph)) == expected, name
+
+
+@case
+def t_after_edge_blocks_until_done():
+    with sandbox() as box:
+        compiler.refine(box, ROOT_ID, AFTER_ONLY)
+        graph = box.read_revision()
+        report = ready_report(box, graph)
+        assert [n["id"] for n in report["nodes"]] == ["N1"]
+        assert report["waiting"][0]["why"] == ["after N1 is pending"]
+
+
+@case
+def t_cycle_is_refused():
+    with sandbox() as box:
+        try:
+            compiler.refine(box, ROOT_ID, CYCLIC)
+        except AtgError as err:
+            assert err.code == "E_CYCLE", err.code
+        else:
+            raise AssertionError("a cyclic subgraph was accepted")
+
+
+@case
+def t_lca_history_beats_prefix():
+    parents = {"N3.1": "N3", "N3.2": "N3", "N3": ROOT_ID, "N7": ROOT_ID}
+    origins = {"N7": "N3.2"}
+    chain = repairer.history_chain("N7", parents, origins)
+    assert chain == [ROOT_ID, "N3", "N3.2", "N7"], chain
+    assert repairer.prefix_ancestor(["N7"]) == ROOT_ID
+
+
+@case
+def t_metrics_from_canned_events():
+    with sandbox() as box:
+        compiled_run(box)
+        for node_id, fields in (("N1", {"raw": "42"}), ("N2.1", {"clean": "clean"})):
+            box.append_event("done", node=node_id, out=fields, ms=5)
+        box.append_event("fail", node="N2.2", err="exit 3", ms=1, **{"class": "X_TOOL"})
+        data = collect(box)
+        assert data["steps"] == 2 and data["frontier_widths"] == [1, 1]
+        assert data["executions"] == 3 and data["failures"] == 1
+        assert data["hallucinatory_action_rate"] == round(1.0 / 3, 4)
+        assert data["failure_precision"] == "n/a"
+        assert data["repairs"] == 0 and data["repair_success_rate"] is None
+        assert data["saved_environment_interactions"] == 0
+
+
+@case
+def t_render_golden():
+    with sandbox() as box:
+        compiler.refine(box, ROOT_ID, R0)
+        graph = box.read_revision()
+        states = box.node_states(graph)
+        assert render(graph, states, "mermaid").splitlines()[:4] == [
+            "flowchart TD",
+            '  N1["N1<br/>fetch raw data<br/>[shell]"]',
+            '  N2("N2<br/>turn raw data into the answer")',
+            "  N1 -->|raw| N2",
+        ]
+        assert render(graph, states, "dot").splitlines()[0] == "digraph atg {"
+        ascii_art = render(graph, states, "ascii")
+        assert "rank 0" in ascii_art and "N1" in ascii_art and "│" in ascii_art
+
+
 def run(verbose=False):
     failures = []
     for fn in CASES:

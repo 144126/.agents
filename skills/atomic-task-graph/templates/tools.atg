@@ -1,0 +1,58 @@
+# generic agent tool space — edit this to match the tools you actually have.
+# a tool declared here but absent in your harness is worse than one left out:
+# checks will pass and execution will fail. delete what you cannot call.
+
+tool bash
+  desc: run a shell command in the working directory
+  in:   cmd:str!, cwd:str, timeout:int
+  out:  stdout:str, stderr:str, code:int
+
+tool read
+  desc: read a file, or a line range of one
+  in:   path:str!, offset:int, limit:int
+  out:  text:str
+
+tool write
+  desc: create or overwrite a file
+  in:   path:str!, text:str!
+  out:  path:str
+
+tool edit
+  desc: replace an exact string in an existing file
+  in:   path:str!, old:str!, new:str!
+  out:  path:str
+
+tool glob
+  desc: list files matching a path pattern, newest first
+  in:   pattern:str!, cwd:str
+  out:  paths:json
+
+tool grep
+  desc: search file contents by regular expression
+  in:   pattern:str!, path:str, glob:str
+  out:  matches:json
+
+tool web_search
+  desc: search the web and return result titles, urls and snippets
+  in:   query:str!
+  out:  results:json
+
+tool web_fetch
+  desc: fetch one url and return its readable text
+  in:   url:str!
+  out:  text:str
+
+tool subagent
+  desc: delegate a self-contained sub-task to a fresh agent and get its report
+  in:   prompt:str!, kind:str
+  out:  report:str
+
+tool ask_user
+  desc: ask the human a question and wait for the answer
+  in:   question:str!, options:json
+  out:  answer:str
+
+tool llm
+  desc: one model call that transforms text — summarize, judge, extract, decide
+  in:   prompt:str!, input:str
+  out:  text:str

@@ -194,11 +194,23 @@ Event types:
 | `freeze` | nodes[] | `atg repair` |
 | `finish` | status ∈ {done, blocked, aborted}, outputs | `atg run`/`atg finish` |
 
-Node status is **derived** by folding the log against the current revision, never
-stored: `pending | ready | running | done | failed | skipped | frozen | stale`.
-`state.json` may cache the fold; it is regenerable and delete-safe. Fold rule:
-last status-changing event for a node wins, except `stale` which overrides `done`
-until the node completes again.
+Node state is **derived** by folding the log against the current revision, never
+stored. `state.json` may cache the fold; it is regenerable and delete-safe.
+
+Execution status is `pending | running | done | failed | skipped | stale`. Fold
+rule: the last status-changing event for a node wins, except `stale`, which
+overrides `done` until the node completes again.
+
+Two states in the enum are deliberately *not* part of that fold, because both are
+orthogonal to how far a node has executed:
+
+- **`frozen`** is a boolean overlay set by `freeze`/`repair`, not a status. A frozen
+  node is almost always also `done` — that is the whole point, its validated output
+  is being preserved — so making the two compete would destroy the information
+  `blame` depends on. `atg status` reports `done (frozen)`.
+- **`ready`** is computed on demand by `schedule.py` from `pending` plus the graph
+  (predecessors `done`, refs resolved). It is never written to the log, because
+  readiness is a property of the graph at a moment, not an event that happened.
 
 ---
 
@@ -624,7 +636,8 @@ subagent, ask_user — so the skill is useful on first contact.
 ## 11. CLI surface
 
 ```
-atg init "<task>" [--tools f] [--acceptance f] [--budget k=v] [--run id]
+atg init "<task>" [--out field] [--input k=v] [--tools f] [--acceptance f]
+         [--budget k=v] [--run-id id]
 atg status | history | show [--rev] | open | context <id> [--repair]
 atg refine <id> --from-file f|--from -
 atg check [--rev] [--strict] [--add CLASS --node id --msg m [--severity s]]
@@ -657,7 +670,7 @@ framework — so verification works on a box with nothing installed.
 | repair | golden `{scope, frozen, boundary, reusable}` for a fixture graph; `E_FROZEN` on an out-of-scope edit |
 | metrics | canned `events.jsonl` → expected numbers, including `failure_precision: n/a` |
 | render | golden mermaid/ascii output |
-| end-to-end | paper Figure 3 with stubbed `run:` commands: asserts 3 frontiers, correct exports, one injected failure localized to `N3`, repaired locally, 2 nodes reused, frozen set untouched |
+| end-to-end | paper Figure 3 with stubbed `run:` commands: asserts frontier widths `[2,2,1,1]`, correct exports through `$N3.advice`, one injected failure localized to `N3`, repaired locally, 2 nodes reused, the frozen set byte-identical afterwards, and the frozen-but-pending consumer `N4` still executing |
 
 ---
 

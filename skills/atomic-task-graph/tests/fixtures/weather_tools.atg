@@ -1,0 +1,31 @@
+# tool space for the paper's Figure 3 walkthrough (weather → travel advice).
+
+tool weather_api
+  desc: forecast for a city and date
+  in:   city:str!, date:str
+  out:  forecast:json
+
+tool geocode
+  desc: resolve a place name to a single place id
+  in:   q:str!
+  out:  place_id:str
+
+tool json_extract
+  desc: pull named fields out of a json document
+  in:   src:json!, fields:str
+  out:  temp_c:str
+
+tool label
+  desc: turn an identifier into a human-readable name
+  in:   place:str!
+  out:  place_name:str
+
+tool llm_judge
+  desc: decide advice from the extracted conditions
+  in:   t:str!, p:str!
+  out:  advice:str
+
+tool compose
+  desc: write the final answer for the user
+  in:   advice:str!, forecast:json!
+  out:  answer:str

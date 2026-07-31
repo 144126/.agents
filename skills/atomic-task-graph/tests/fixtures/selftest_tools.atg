@@ -1,0 +1,5 @@
+# permissive registry for the self-test graphs: one tool, no output typing.
+
+tool shell
+  desc: run a shell command and name its result
+  in:   cmd:str, raw:str, clean:str
