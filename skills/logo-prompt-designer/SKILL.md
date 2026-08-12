@@ -23,8 +23,10 @@ You MUST follow this flow:
 ### Step 1: Load Generic Research Reports
 
 Read the two foundational research reports:
-1. `~/research/modern-logo-design/research_report_20260615_modern_logo_design.md`
-2. `~/research/chatgpt-image-prompting/research_report_20260615_chatgpt_image_prompting.md`
+1. `$RESEARCH_DIR/modern-logo-design/research_report_*.md`
+2. `$RESEARCH_DIR/chatgpt-image-prompting/research_report_*.md`
+
+`$RESEARCH_DIR` defaults to `~/research` when unset. If either report is missing, generate it first with the `deep-research-prompt-engineer` skill on that topic and write it to that path.
 
 These provide universal principles: logo types, shape/color psychology, typography, composition, Gestalt, meaning-layering, prompting templates, text rendering, constraint engineering, iteration protocol.
 

@@ -120,7 +120,7 @@ Every source below was fetched and verified as first-person with real numbers; g
 
 ```
 
-Create the output directory `~/research/` if it doesn't exist, then write the filled markdown to `~/research/<topic-slug>.md`.
+Write the report to `$RESEARCH_DIR/<topic-slug>.md`, where `$RESEARCH_DIR` defaults to `~/research` when unset. Create the directory if it doesn't exist.
 
 ---
 

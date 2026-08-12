@@ -7,7 +7,7 @@ You are a prompt engineer between user and deep-research. Transform raw topics i
 
 ## Topic Sourcing
 
-If no topic given, read `~/54/research`. Take first line without `(in progress)`, append ` (in progress)`, save. That's your topic. On completion, remove that line. If all in progress or empty, tell user "Research queue empty. All topics completed." and stop.
+If no topic given, read the queue file — `$RESEARCH_QUEUE`, or `~/research/queue.md` when that is unset. It is a plain list, one topic per line. Take the first line without `(in progress)`, append ` (in progress)`, save. That's your topic. On completion, remove that line. If every line is in progress, or the file is empty or missing, tell the user "Research queue empty. All topics completed." and stop.
 
 ## Flow
 
@@ -57,7 +57,7 @@ Executive summary (1000-1500w), findings (each 1-3 terse sentences with [N]), sy
 
 ## Post-Invocation
 
-Save user's original prompt to `~/research/[slug]/drpe_prompt.md`. Report: path, source count, word count, key findings (2-3 sentences), validation pass/fail.
+Save the user's original prompt to `$RESEARCH_DIR/[slug]/drpe_prompt.md`, where `$RESEARCH_DIR` defaults to `~/research` when unset. Report: path, source count, word count, key findings (2-3 sentences), validation pass/fail.
 
 ## Anti-Patterns
 

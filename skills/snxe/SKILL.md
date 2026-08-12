@@ -1,43 +1,49 @@
 ---
 name: snxe
-description: Exa deep-research skill. Triggers on 'snxe'. Uses Exa MCP `web_search_advanced_exa` with maxAgeHours:0 for always-fresh multi-pass research with citations. Not for quick lookups - use 'sn' for those.
+description: Firecrawl deep-research skill. Triggers on 'snxe'. Runs 8-20+ live Firecrawl searches (always fresh, never cached) with citations and bounded output. Not for quick lookups - use 'sn' for those.
 ---
 
-# SNXe SKILL
+# SNXE SKILL (Firecrawl)
 
-This skill activates when the user message contains 'snxe'. It performs exhaustive multi-pass web research using the Exa MCP `web_search_advanced_exa` tool with `maxAgeHours: 0` for always-fresh results, citations, and structured breakdowns.
+Activates when the user message contains 'snxe'. Performs exhaustive multi-pass web
+research through Firecrawl (live, never cached), with citation tracking and bounded
+per-result output.
 
-## When to Use
+## Firecrawl Runner Usage
 
-Use this skill when you need:
-- Deep, multi-source research with citations (always fresh, no cache)
-- Structured analysis with findings and evidence
-- Comprehensive coverage of a topic
-- Verifiable facts with source tracking
+Use the `fc` runner (wraps the Firecrawl backend):
+
+- Search: `~/.agents/bin/fc search "<query>" [num] [text_max]`
+  - `num` default 8; `text_max` caps each result's length (default 8000) — THIS is
+    what keeps SNXE output bounded.
+- Fetch a page: `~/.agents/bin/fc fetch "<url>" [text_max]`
+  - pulls live page text (Firecrawl default is fresh, no cache).
+
+Example:
+```
+~/.agents/bin/fc search "latest AI chip developments 2026" 9 6000
+~/.agents/bin/fc fetch "https://example.com/article" 15000
+```
 
 ## Behavior
 
 When a user message contains 'snxe':
 1. Extract the research query from the user message
-2. Always use the Exa MCP tool `web_search_advanced_exa` with `maxAgeHours: 0` for every search
+2. Run `~/.agents/bin/fc search "<query>" 9 6000` (fresh, bounded)
 3. Run 8-20+ searches across multiple angles
-4. Track sources and citations per claim
-5. Identify contradictions and gaps
-6. Return a structured research-style breakdown
+4. Track sources and citations per claim (capture each `url`)
+5. To read a source's full text, run `~/.agents/bin/fc fetch "<url>"`
+6. Identify contradictions and gaps
+7. Return a structured research-style breakdown
 
-## Exa MCP Tool Usage
-
-Use `web_search_advanced_exa` (from the Exa MCP server) for all searches. Always include:
-- `maxAgeHours: 0` — ensures always-fresh results, never uses cache
-- `type: "auto"` — balanced search quality
-- `numResults: 10` or more for depth
-- Use `includeDomains`/`excludeDomains` for targeted research
-- Use `startPublishedDate`/`endPublishedDate` for temporal filtering
+Keep each individual search's output bounded via the `text_max` arg — never request
+full untruncated pages.
 
 ## Example Usage
 
 User: "snxe: latest AI chip developments 2026"
-Will produce: multi-source deep research with citations, findings, contradictions, sources appendix (all results always fresh)
+Will produce: multi-source deep research with citations, findings, contradictions,
+sources appendix (all results always fresh, each bounded).
 
 User: "snxe: compare Rust vs Go for web services"
-Will produce: comparison with evidence per claim, source-based breakdown (all results always fresh)
+Will produce: comparison with evidence per claim, source-based breakdown.
