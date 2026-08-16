@@ -207,4 +207,5 @@ In Claude Code: `/loop /bible-contra`.
 
 Where things are: `FINDINGS.md` is the deliverable. `CANDIDATES.md` is the holding pen.
 `rejected.jsonl` is the graveyard with reasons. `log.md` is the running notebook.
-Every pass is a git commit, so the refinement history is the repo history.
+A pass that changes something makes a git commit, so the refinement history is the repo
+history.
