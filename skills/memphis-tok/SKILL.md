@@ -180,8 +180,20 @@ One JSON file per video. Write it to the project, not to this skill.
 
 ## Sound
 
-Set `generate_audio: true` and ask the prompt for sound design only, never a voice. A
-generated voice sounds synthetic, and synthetic reads as a scam in the comments. Then add a
+**Never negate in the `audio` field.** Wan reads it literally, and a line like "no voice,
+no music, no melody" returns a track of digital silence, mean volume -90 dB. Name the
+sounds you want and stop: "a hollow wooden knock, then two soft footsteps". Seedance
+ignores the negations and makes sound anyway, so this bites only on Wan, and it bites
+silently. Check every render:
+
+```bash
+ffmpeg -i out/<id>-raw.mp4 -af volumedetect -f null /dev/null 2>&1 | grep volume
+```
+
+Anything near -90 dB mean is a silent track. Re-render with a positive audio line.
+
+Keep speech out by simply not asking for it. A generated voice sounds synthetic, and
+synthetic reads as a scam in the comments. Then add a
 trending sound in the TikTok app at upload. Native trending audio is a ranking signal and
 it is free. The burned-in captions carry the words, so the video works muted, which is how
 most of the room watches.

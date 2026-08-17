@@ -76,7 +76,9 @@ if (cmd === 'gen') {
 	if (spec.seed !== undefined) body.seed = spec.seed;
 	if (model.startsWith('alibaba/wan'))
 		body.provider = {
-			options: { 'atlas-cloud': { parameters: { negative_prompt: NEG, prompt_extend: false } } }
+			options: {
+				'atlas-cloud': { parameters: { negative_prompt: NEG, prompt_extend: false, audio: true } }
+			}
 		};
 	else body.prompt += `\n\navoid: ${NEG}`;
 	if (existsSync(kf)) {
