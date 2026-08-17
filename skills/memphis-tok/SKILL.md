@@ -83,32 +83,53 @@ Four steps. Step 2 costs cents, step 3 costs dollars, step 4 is free.
 
 ## The model
 
-Default is `bytedance/seedance-2.0`. Override per video with `"model"` in the spec, or per
-brand with `"video_model"` in the brand file.
+Default is `alibaba/wan-2.7`. Override per video with `"model"` in the spec, or per brand
+with `"video_model"` in the brand file.
 
-| | seedance-2.0 | seedance-2.0-fast | flux-3-video |
-|---|---|---|---|
-| seed | yes | yes | no |
-| resolutions | 480p to 4K | 480p, 720p | 720p, 1080p |
-| durations | 4-15 | 4-15 | 5-20 |
-| price | 0.7 cents per 1k video tokens | 0.42 | 17 cents a second |
+Three things this job needs, and they knock out most of the field:
 
-Seed is the reason to prefer Seedance. Hold a seed and you can change one clause of the
-prompt without losing the take. FLUX has no seed, so every re-render there is a new roll.
+1. **A last frame.** The loop comes from pinning one keyframe as both `first_frame` and
+   `last_frame`. No last frame, no loop. This cuts Sora 2 Pro, Runway, Grok Imagine,
+   Hailuo 2.3, Wan 2.6, and Happyhorse.
+2. **A seed.** Without one, every re-render is a fresh roll and you cannot change a single
+   clause and keep the take. This cuts Kling 3.0, Hailuo 3, and FLUX 3 Video.
+3. **Nine seconds.** The whole Veo 3.1 family caps at 8.
 
-Seedance also renders 1080x1920 natively, so step 4 has nothing to upscale. It costs more
-tokens. Start at 720p, go native only when the still is settled.
+What survives, priced for 9 seconds at 720p vertical with audio:
+
+| model | seed | last frame | neg prompt | 9s cost, USD |
+|---|---|---|---|---|
+| **alibaba/wan-2.7** | yes | yes | **yes** | **0.90** |
+| bytedance/seedance-1-5-pro | yes | yes | no | 0.47, or 0.23 mute |
+| bytedance/seedance-2.0-mini | yes | yes | no | 0.68 |
+| bytedance/seedance-2.0-fast | yes | yes | no | 0.82 |
+| bytedance/seedance-2.0 | yes | yes | no | 1.37, measured |
+| bytedance/seedance-2.5 | yes | yes | no | 2.08 |
+
+Wan 2.7 wins on the thing that decides this style. It is the only one of them that takes a
+**negative prompt**, and a negative prompt is the main lever against photoreal drift. Every
+video model is trained to add light, depth, and texture. Flat vector is defined by what is
+absent, so the ability to name what must not appear is worth more here than raw quality.
+Reviewers also put Wan ahead on holding a drawn style through motion, where Seedance slides
+towards a soft 2.5D look. Wan is cheaper than Seedance 2.0 as well.
+
+The catch is that Wan favours the prompt over the frames when the two disagree. Describe a
+motion that **returns**, like a cycle or a sway, never a one way exit, or it will fight the
+pinned last frame and jump at the midpoint.
+
+`bytedance/seedance-1-5-pro` is the budget pick at a third of the price, and mute it for
+half of that again. Take it when you are shipping volume and the sound comes from TikTok
+anyway.
+
+Seedance is priced by video token, so the bill is pixels times frames times length:
+`w * h * fps * seconds / 1024` tokens. Wan, Veo, and Kling bill by the second.
 
 ## Cost
-
-Seedance is priced by video token, not by second, so the bill scales with pixels times
-frames times length. A nine second 720p clip lands near a dollar. Nine seconds at 1080p is
-several times that.
 
 | Step | Cost, USD |
 |---|---|
 | keyframe, gemini image | about 7 cents each, two or three is normal |
-| render, 720p, 9s | around 1 |
+| render, wan-2.7, 720p, 9s | 0.90 |
 | caption burn, local ffmpeg | 0 |
 
 `gen` prints the balance before it submits. Check it yourself first when the budget is

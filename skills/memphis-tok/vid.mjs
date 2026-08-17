@@ -64,15 +64,21 @@ if (cmd === 'key') {
 
 if (cmd === 'gen') {
 	const kf = p('-key.png');
+	const model = spec.model ?? brand.video_model ?? 'alibaba/wan-2.7';
 	const body = {
-		model: spec.model ?? brand.video_model ?? 'bytedance/seedance-2.0',
-		prompt: `${STYLE}\n\n${spec.shot}\n\n${MOTION}\n\naudio: ${spec.audio}\n\navoid: ${NEG}`,
+		model,
+		prompt: `${STYLE}\n\n${spec.shot}\n\n${MOTION}\n\naudio: ${spec.audio}`,
 		duration: dur,
 		aspect_ratio: '9:16',
 		resolution: spec.resolution ?? '720p',
 		generate_audio: true
 	};
 	if (spec.seed !== undefined) body.seed = spec.seed;
+	if (model.startsWith('alibaba/wan'))
+		body.provider = {
+			options: { 'atlas-cloud': { parameters: { negative_prompt: NEG, prompt_extend: false } } }
+		};
+	else body.prompt += `\n\navoid: ${NEG}`;
 	if (existsSync(kf)) {
 		const u = `data:image/png;base64,${readFileSync(kf).toString('base64')}`;
 		body.frame_images = [
