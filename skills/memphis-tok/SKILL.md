@@ -1,6 +1,6 @@
 ---
 name: memphis-tok
-description: Make a short corporate-memphis style TikTok video built to go viral, with Seedance 2.0. Flat vector figures, brand colours only, 9 seconds by default, captions burned in with the real brand font. Use when the user wants a TikTok, Reel, or Short in flat illustration or corporate memphis style, wants an animated explainer for a brand, says "make a tiktok", "make a viral video", "corporate memphis video", "flat animation ad", or names a brand preset.
+description: Make a short corporate-memphis style TikTok video built to go viral, with Wan 2.7. Flat vector figures, brand colours only, 9 seconds by default, captions burned in with the real brand font. Use when the user wants a TikTok, Reel, or Short in flat illustration or corporate memphis style, wants an animated explainer for a brand, says "make a tiktok", "make a viral video", "corporate memphis video", "flat animation ad", or names a brand preset.
 ---
 
 # memphis-tok
