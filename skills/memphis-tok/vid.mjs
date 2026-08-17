@@ -65,13 +65,14 @@ if (cmd === 'key') {
 if (cmd === 'gen') {
 	const kf = p('-key.png');
 	const body = {
-		model: 'black-forest-labs/flux-3-video',
+		model: spec.model ?? brand.video_model ?? 'bytedance/seedance-2.0',
 		prompt: `${STYLE}\n\n${spec.shot}\n\n${MOTION}\n\naudio: ${spec.audio}\n\navoid: ${NEG}`,
 		duration: dur,
 		aspect_ratio: '9:16',
 		resolution: spec.resolution ?? '720p',
 		generate_audio: true
 	};
+	if (spec.seed !== undefined) body.seed = spec.seed;
 	if (existsSync(kf)) {
 		const u = `data:image/png;base64,${readFileSync(kf).toString('base64')}`;
 		body.frame_images = [
@@ -79,8 +80,8 @@ if (cmd === 'gen') {
 			{ type: 'image_url', image_url: { url: u }, frame_type: 'last_frame' }
 		];
 	}
-	const cost = (dur * (body.resolution === '1080p' ? 0.29 : 0.17)).toFixed(2);
-	console.error(`submitting ${dur}s ${body.resolution} — $${cost}`);
+	const bal = (await api('/key')).data.limit_remaining;
+	console.error(`${body.model} ${dur}s ${body.resolution} — balance $${bal}`);
 	const job = await api('/videos', { method: 'POST', body: JSON.stringify(body) });
 	console.error(`job ${job.id}`);
 	for (;;) {

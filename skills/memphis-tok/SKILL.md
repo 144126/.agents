@@ -1,6 +1,6 @@
 ---
 name: memphis-tok
-description: Make a short corporate-memphis style TikTok video built to go viral, with FLUX 3 Video. Flat vector figures, brand colours only, 9 seconds by default, captions burned in with the real brand font. Use when the user wants a TikTok, Reel, or Short in flat illustration or corporate memphis style, wants an animated explainer for a brand, says "make a tiktok", "make a viral video", "corporate memphis video", "flat animation ad", or names a brand preset.
+description: Make a short corporate-memphis style TikTok video built to go viral, with Seedance 2.0. Flat vector figures, brand colours only, 9 seconds by default, captions burned in with the real brand font. Use when the user wants a TikTok, Reel, or Short in flat illustration or corporate memphis style, wants an animated explainer for a brand, says "make a tiktok", "make a viral video", "corporate memphis video", "flat animation ad", or names a brand preset.
 ---
 
 # memphis-tok
@@ -75,28 +75,44 @@ Four steps. Step 2 costs cents, step 3 costs dollars, step 4 is free.
    about a cent. This is where you iterate. Text to video invents a new palette every run;
    image to video inherits the keyframe's exact colours. Get the still right, then animate
    once.
-3. **Render.** FLUX 3 Video, image to video from the keyframe, one shot. The keyframe is
+3. **Render.** `bytedance/seedance-2.0`, image to video from the keyframe. The keyframe is
    pinned as **both** `first_frame` and `last_frame`, so the clip returns to where it
    started and loops with no visible cut.
-4. **Burn.** Overlay the captions and the end card with the real brand font, upscale to
+4. **Burn.** Overlay the captions and the end card with the real brand font, scale to
    1080x1920, trim to length.
+
+## The model
+
+Default is `bytedance/seedance-2.0`. Override per video with `"model"` in the spec, or per
+brand with `"video_model"` in the brand file.
+
+| | seedance-2.0 | seedance-2.0-fast | flux-3-video |
+|---|---|---|---|
+| seed | yes | yes | no |
+| resolutions | 480p to 4K | 480p, 720p | 720p, 1080p |
+| durations | 4-15 | 4-15 | 5-20 |
+| price | 0.7 cents per 1k video tokens | 0.42 | 17 cents a second |
+
+Seed is the reason to prefer Seedance. Hold a seed and you can change one clause of the
+prompt without losing the take. FLUX has no seed, so every re-render there is a new roll.
+
+Seedance also renders 1080x1920 natively, so step 4 has nothing to upscale. It costs more
+tokens. Start at 720p, go native only when the still is settled.
 
 ## Cost
 
-FLUX 3 Video on OpenRouter has **no draft mode and no seed**. The only lever is resolution,
-so every render is a full-price render. That is why the keyframe carries the iteration.
+Seedance is priced by video token, not by second, so the bill scales with pixels times
+frames times length. A nine second 720p clip lands near a dollar. Nine seconds at 1080p is
+several times that.
 
 | Step | Cost, USD |
 |---|---|
 | keyframe, gemini image | about 7 cents each, two or three is normal |
-| render, 720p, 17 cents a second | 1.53 for 9s |
-| render, 1080p, 29 cents a second | 2.61 for 9s |
+| render, 720p, 9s | around 1 |
 | caption burn, local ffmpeg | 0 |
 
-Render at **720p** and let step 4 upscale to 1080x1920 with lanczos. TikTok re-encodes the
-upload anyway, so 1080p buys almost nothing for a dollar more.
-
-Check the balance before you submit. A render that runs out of credit still costs the time.
+`gen` prints the balance before it submits. Check it yourself first when the budget is
+thin, because a render that runs out of credit still costs the wait.
 
 ```bash
 curl -s -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/key
@@ -123,6 +139,7 @@ One JSON file per video. Write it to the project, not to this skill.
   "brand": "hgc",
   "dur": 9,
   "resolution": "720p",
+  "seed": 9,
   "shot": "one shot, camera locked. a figure stands at a tall flat archway...",
   "audio": "sound design only, soft paper whooshes and low pops, no voice, no music",
   "captions": [
@@ -142,8 +159,8 @@ One JSON file per video. Write it to the project, not to this skill.
 
 ## Sound
 
-Set `generate_audio: true` and ask the prompt for sound design only, never a voice. FLUX
-voices sound synthetic and a synthetic voice reads as a scam in the comments. Then add a
+Set `generate_audio: true` and ask the prompt for sound design only, never a voice. A
+generated voice sounds synthetic, and synthetic reads as a scam in the comments. Then add a
 trending sound in the TikTok app at upload. Native trending audio is a ranking signal and
 it is free. The burned-in captions carry the words, so the video works muted, which is how
 most of the room watches.
