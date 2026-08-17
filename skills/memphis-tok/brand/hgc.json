@@ -1,0 +1,25 @@
+{
+	"name": "Hogan and Crown Law",
+	"palette": [
+		"#f1f2ee",
+		"#e6e8e2",
+		"#cdd0c8",
+		"#1e4034",
+		"#2c5f4d",
+		"#15171b"
+	],
+	"paper": "#f1f2ee",
+	"ink": "#15171b",
+	"rule": "#cdd0c8",
+	"muted": "#5b5f59",
+	"seal": "#1e4034",
+	"fonts": {
+		"display": "/home/ed/i/hgc/static/fonts/newsreader-normal-200-800.woff2",
+		"sans": "/home/ed/i/hgc/static/fonts/instrument-sans-normal-400-700.woff2",
+		"mono": "/home/ed/i/hgc/static/fonts/ibm-plex-mono-normal-500.woff2"
+	},
+	"endcard_label": "us immigration counsel",
+	"endcard_sub": "hoganandcrownlaw.com",
+	"image_model": "google/gemini-3-pro-image",
+	"chromium": "/home/ed/.local/bin/chromium"
+}
