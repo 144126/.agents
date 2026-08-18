@@ -67,7 +67,7 @@ if (cmd === 'gen') {
 	const model = spec.model ?? brand.video_model ?? 'alibaba/wan-2.7';
 	const body = {
 		model,
-		prompt: `${STYLE}\n\n${spec.shot}\n\n${MOTION}\n\naudio: ${spec.audio}`,
+		prompt: `${STYLE}\n\n${spec.shot}\n\n${spec.motion ?? MOTION}\n\naudio: ${spec.audio}`,
 		duration: dur,
 		aspect_ratio: '9:16',
 		resolution: spec.resolution ?? '720p',
