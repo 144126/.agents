@@ -136,14 +136,45 @@ and use three.
 
 ## Pipeline
 
+Two stages, and the user decides when to move between them.
+
 ```bash
-node still.mjs pic  <spec.json> 0      # one still, review it, then do the rest
-node still.mjs pic  <spec.json> all    # the remaining stills
-node still.mjs cut  <spec.json>        # ken burns, cuts, assembly, ffmpeg only, free
+node still.mjs pic  <spec.json> 0           # preview, cheap model
+node still.mjs pic  <spec.json> all         # the rest of the previews
+# show the user. iterate here. only when they say it is right:
+node still.mjs pic  <spec.json> all prod    # finals, strong model, medium quality
+node still.mjs cut  <spec.json>             # ken burns, cuts, assembly. ffmpeg only, free
+node edit.mjs <src.png> <dest.png> "…"      # change one thing in a finished still
 ```
 
-Generate **one still first and look at it**. Text inside a scene is the part that fails, and it
+| stage | model | why |
+| --- | --- | --- |
+| preview | `black-forest-labs/flux.2-klein-4b` | cheap, takes a seed, so one clause can change and the take survives |
+| final | `openai/gpt-image-2` at `quality: medium` | spells correctly and carves convincingly |
+
+Same aspect ratio in both stages so the composition you approved is the composition you ship.
+
+Generate **one preview first and look at it**. Text inside a scene is the part that fails, and it
 fails the same way on every card in a batch. One rejected batch costs more than one test.
+
+## One fixed style reference
+
+Do not paint a fresh base for every card. Keep **one** approved still as the house reference and
+pass it as an `input_references` image on every generation, forever. That is what stops the look
+drifting between cards and between episodes.
+
+Pick the reference from a card that already came out right, and never regenerate it. Point
+`style_ref` in the style file at it.
+
+## Editing beats regenerating
+
+When a finished still is right except for one thing, edit it. Do not roll a new one — you will lose
+the composition you liked, and you will pay to lose it.
+
+`gpt-image-2` accepts up to sixteen reference images and edits at about 4 cents. Be aware it treats
+a reference as a strong suggestion and not a mask: it holds the scene, the subject, the pose and the
+palette, but it can re-frame. Say "same camera angle, same crop" explicitly, and check the framing
+against the original before accepting.
 
 ## Found in practice
 
