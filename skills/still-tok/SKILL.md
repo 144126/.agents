@@ -161,6 +161,12 @@ which is the exact thing the format exists to avoid. Asked to *fix* words alread
 material, it keeps the material. The garbled first pass is doing real work: it establishes that
 the letters are worn, embossed, or traced, and where.
 
+**Pass two has to defend the style as well as fix the words.** The strong model repaints while it
+letters, and it repaints towards photoreal — realistic concrete, fabric weave, depth of field. The
+pass two prompt has to carry its own style defence: keep it a flat painted animation frame, do not
+repaint any surface realistically, do not add photographic texture or render sheen, the only thing
+you change is the lettering. Without that line one card in three comes back as a 3D render.
+
 **Pass two has to be given permission to destroy.** "Correct the lettering" leaves the garble
 untouched. What works is telling it the writing is misspelled nonsense, and to erase it completely
 and redraw it from scratch.
@@ -175,6 +181,21 @@ look. What produces flat painted planes is naming what it actually is:
 > in a shape. there is no photographic surface texture, no visible fabric weave or carpet fibre, no
 > volumetric light shafts or god rays, no realistic depth of field, no render sheen and no specular
 > highlights. light falls as broad flat painted shapes, not as simulated beams.
+
+**Carve it, do not mark it.** Words that sit on a surface read as a caption no matter how you dress
+them. Words cut *into* a surface read as part of the world. Three things make the difference, and
+all three have to be in the prompt:
+
+1. **Shadow inside the groove, and a lit edge along one side of every stroke.** This is what the eye
+   reads as depth. Name which direction the light comes from.
+2. **Cut through a layer.** Not "carved into the door" but gouged through the paint into the bare
+   wood beneath, through the varnish into raw pale wood, through the surface of the slab.
+3. **Imperfection.** Wandering depth, crooked strokes, doubled cuts where the blade slipped, chipped
+   edges, torn grain, splinters standing up, grime settled in the bottoms. A clean even engraving
+   still reads as machine-made type.
+
+Embossing works the same way and is the gentlest version of it: raised and sunken shapes catching a
+low raking light, no ink at all. That one holds up best on paper.
 
 **Name the material and name the light.** The material alone gives you a sign hanging in the scene.
 "worn into the painted concrete floor, the paint rubbed away by thousands of feet walking the same
