@@ -9,7 +9,7 @@ description: >-
 
 # Condense-search
 
-CLI: `~/.agents/skills/condense-search/bin/cnd` (called `cnd` below).
+CLI: `~/.agents/skills/condense-search/bin/cnd` (called `cnd` below). Needs `FIRECRAWL_API_KEY` in env or `~/.agents/secrets/firecrawl.env`.
 
 1. `cnd init "<subject>" --slug <slug> && cnd search <slug> "<query>"` — search several angles: proponents, critics, independent.
 2. `cnd fetch <slug>` — pulls page text.

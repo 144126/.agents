@@ -1,38 +1,30 @@
-# condense / `cnd`
+# condense-search
 
-Disk-backed claim ledger runner.
+`cnd` turns web search into a quote-audited fact ledger. One module: `cnd.py`.
 
-```bash
-export PATH="$HOME/.agents/skills/condense-search/bin:$PATH"
-cnd init "topic" -n 10 --slug my-topic
-cnd search my-topic "query" --channel warrant
-cnd fetch my-topic
-# agent extract → extracts/*.json
-cnd ingest-extract my-topic extracts/….json
-cnd gate my-topic && cnd merge my-topic && cnd write my-topic
-```
+## Setup
 
-- Skill driver: `SKILL.md`
-- Epistemology: `references/epistemology.md`
-- Extract prompt: `references/extract_prompt.md`
-- Firecrawl key (required): `~/.agents/secrets/firecrawl.env` (`FIRECRAWL_API_KEY=...`)
+- CLI: `bin/cnd`
+- Needs `FIRECRAWL_API_KEY` in the environment or `~/.agents/secrets/firecrawl.env`
 
-## Search + live fetch (Firecrawl)
+## Flow
 
-`cnd search` returns result urls/titles; `cnd fetch` is the sole path that
-pulls page text, via **Firecrawl live scrape** (`max_age=0`, no cache) so the
-quote/number gates check against current page text. URLs are deduplicated by
-canonicalization (scheme/www/tracking-strip) so the same page isn't fetched
-twice or counted as two independent sources. A Firecrawl key is required;
-`cnd search`/`cnd fetch` die with a clear message if it's unset.
+1. `cnd init "<subject>" --slug <slug>`
+2. `cnd search <slug> "<query>"` — repeat from different angles
+3. `cnd fetch <slug>` — parallel scrape, PDF fallback via `pdftotext`
+4. Extract per `references/extract_prompt.md` into one JSON per page
+5. `cnd ingest-extract <slug> extract.json --source-url <url>`
+6. `cnd gate <slug>` — quote and figure gates, echo collapse, status
+7. `cnd write <slug> --question "..." --settlement "..."`
+8. `cnd selfcheck`
 
-## Accuracy gates (deterministic, in `cnd gate` / `cnd write`)
+Work lives in `~/search/<slug>/`; the published ledger lands in `~/search/<slug>.md`.
 
-- Quote must be verbatim substring; fuzzy (>8% omission) is soft → max SINGLE.
-- Every number/date in a claim must appear in the quote window (else `numbers_not_in_quote`).
-- Negation polarity must match between quote and claim.
-- Near-identical quote / shared primary+number / shared DOI-NCT-arxiv across domains collapse to ONE independence unit.
-- Efficacy `measurement` whose primary was not opened is capped at SINGLE.
-- `depends_on` children cannot outrank their weakest parent.
-- `verify_ledger` blocks `cnd write` if any number/URL in the md is not ⊆ gated claims.
-- SETTLED is banned and refused at write.
+## Guarantees
+
+- Every published claim carries a verbatim quote from a fetched page.
+- Every figure and year in the claim text appears near that quote.
+- Identical quotes or shared DOI/arxiv/NCT ids across domains count as one origin.
+- CORROBORATED requires byte-identical claim wording verified on two or more independent domains.
+
+Not detected: paraphrased syndication, semantic errors, source trustworthiness. The ledger states this on its face.
