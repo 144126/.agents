@@ -23,7 +23,7 @@ Think, search, think. If a single `firecrawl search` would answer, skip this ski
 rethink "how to research: <topic>" <pre>
 ```
 
-Summarize `~/think/<slug>.conclusions.md` only. Use those bullets as the search angles.
+Use those conclusions as the search angles.
 
 ## 2 — search
 
