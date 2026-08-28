@@ -23,7 +23,7 @@ Think, search, think. If a single `firecrawl search` would answer, skip this ski
 rethink "how to research: <topic>" <pre>
 ```
 
-Use those conclusions as the search angles.
+Use its conclusions as the search angles.
 
 ## 2 — search
 
