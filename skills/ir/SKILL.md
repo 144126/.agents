@@ -1,9 +1,9 @@
 ---
-name: picture-draft
+name: ir
 description: Make a picture by drafting SVG, then Muse Spark Image via OpenRouter (3-call ceiling). Use when the user wants a picture, image, illustration, poster, scene, or visual.
 ---
 
-# Picture Draft
+# ir
 
 SVG is the cheap wireframe. Muse is the expensive render. Ceiling 3 Muse calls â€” stop early.
 
@@ -13,11 +13,11 @@ SVG is the cheap wireframe. Muse is the expensive render. Ceiling 3 Muse calls â
 2. Write `.picture-draft/<yyyy-mm-dd-slug>/draft.svg`. Blocks for regions, one focal shape, flat palette. No textures.
 3. Render, read the PNG, fix the SVG. Repeat until the composition is right.
    ```bash
-   python3 ~/.agents/skills/picture-draft/scripts/picture.py render draft.svg draft.png
+   python3 ~/.agents/skills/ir/scripts/picture.py render draft.svg draft.png
    ```
 4. Generate (needs `draft.png`):
    ```bash
-   python3 ~/.agents/skills/picture-draft/scripts/picture.py generate \
+   python3 ~/.agents/skills/ir/scripts/picture.py generate \
      --prompt "..." --ref draft.png --out output-01.png
    ```
 5. Read the image. Good â†’ stop. Else one of:
@@ -27,4 +27,4 @@ SVG is the cheap wireframe. Muse is the expensive render. Ceiling 3 Muse calls â
 
 No mid-flow questions. Deliver the image. Budget stays internal.
 
-`OPENROUTER_API_KEY` required. Model `meta/muse-spark-1.2`. Failed HTTP does not count.
+`OPENROUTER_API_KEY` required. Model `meta/muse-image` via `POST /api/v1/images`. Failed HTTP does not count.
