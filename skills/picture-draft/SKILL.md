@@ -11,7 +11,7 @@ SVG is the cheap wireframe. Muse is the expensive render. Ceiling 3 Muse calls â
 
 1. If the request is under 15 words, add 2â€“3 concrete visual details (style, light, composition). Else use it verbatim.
 2. Write `.picture-draft/<yyyy-mm-dd-slug>/draft.svg`. Blocks for regions, one focal shape, flat palette. No textures.
-3. Render, then read the PNG and fix the SVG at most twice more:
+3. Render, read the PNG, fix the SVG. Repeat until the composition is right.
    ```bash
    python3 ~/.agents/skills/picture-draft/scripts/picture.py render draft.svg draft.png
    ```
