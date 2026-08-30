@@ -107,11 +107,7 @@ strong onset.
 ~/.venvs/beat/bin/python trans.py snd.wav      # muscriptor, per instrument note starts
 ```
 
-MuScriptor lives at `~/i/muscriptor`. Despite the README, **it needs no `HF_TOKEN`** — the weights
-download anonymously. Install it into a venv that already has torch, add `soundfile` or its audio
-loader fails with a bare "Could not load audio". The API is `TranscriptionModel.load_model(device=
-"cpu")`, then `.transcribe(path)` yields `NoteStartEvent` objects carrying `start_time`, `pitch`,
-and `instrument`.
+Muscriptor lives at `~/i/muscriptor` (by Mirelo + Kyutai). It **requires `HF_TOKEN`** — the weights are gated on HuggingFace (accept license at huggingface.co/MuScriptor/muscriptor-large). Set `HF_TOKEN=hf_...` in env and `hf auth login`. Install it into a venv that already has torch, add `soundfile` or its audio loader fails with a bare "Could not load audio". The API is `TranscriptionModel.load_model(device="cpu", weights_path="large")` for the biggest model (1.4B, 48 layers), then `.transcribe(path)` yields `NoteStartEvent` objects carrying `start_time`, `pitch`, and `instrument`.
 
 **A hit is a chord, not a note.** Group note starts by timestamp. Where four or more pitches start
 together, that is a strike you can hear. Two notes is not. Cut on the four-plus ones.
