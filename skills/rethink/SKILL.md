@@ -5,7 +5,7 @@ description: Topic from N angles.
 
 # rethink
 
-Uses OpenRouter (OPENROUTER_API_KEY).
+Uses z-ai/glm-5.3-flash via OpenRouter (OPENROUTER_API_KEY).
 
 User says think about `<topic>` from N angles. If they say fast, add `--fast` (no-op).
 
