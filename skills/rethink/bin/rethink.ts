@@ -9,7 +9,40 @@ type Node = { s: string; d?: 0 | 1; c?: Record<string, Node> };
 type Tree = Record<string, Node>;
 type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses' };
 
+const usages: any[] = [];
+
+function add_usage(a: any, b: any): any {
+	if (typeof b === 'number' && Number.isFinite(b)) {
+		return (typeof a === 'number' && Number.isFinite(a) ? a : 0) + b;
+	}
+	if (b && typeof b === 'object' && !Array.isArray(b)) {
+		const out: any = a && typeof a === 'object' && !Array.isArray(a) ? { ...a } : {};
+		for (const [k, v] of Object.entries(b)) out[k] = add_usage(out[k], v);
+		return out;
+	}
+	return b ?? a;
+}
+
+function record_usage(json: any) {
+	const u = json?.usage;
+	if (u && typeof u === 'object') {
+		usages.push(u);
+		console.log(`usage: ${JSON.stringify(u)}`);
+	} else {
+		console.log('usage: (none in response)');
+	}
+}
+
+function dump_usage() {
+	if (!usages.length) return;
+	const total = usages.reduce((a, u) => add_usage(a, u), {});
+	console.log(`usage calls: ${usages.length}`);
+	usages.forEach((u, i) => console.log(`usage ${i + 1}: ${JSON.stringify(u)}`));
+	console.log(`usage total: ${JSON.stringify(total)}`);
+}
+
 const die = (m: string): never => {
+	dump_usage();
 	console.error(m);
 	process.exit(1);
 };
@@ -139,8 +172,8 @@ async function fetch_with_cfg(cfg: Cfg, messages: { role: string; content: strin
 	const url = cfg.baseUrl + (cfg.api === 'responses' ? '/responses' : '/chat/completions');
 	const body =
 		cfg.api === 'responses'
-			? { model: cfg.model, input: messages.map((m) => m.content).join('\n\n'), max_output_tokens: cfg.max_tokens }
-			: { model: cfg.model, messages, max_tokens: cfg.max_tokens, temperature: 0.7 };
+			? { model: cfg.model, input: messages.map((m) => m.content).join('\n\n'), max_output_tokens: cfg.max_tokens, usage: { include: true } }
+			: { model: cfg.model, messages, max_tokens: cfg.max_tokens, temperature: 0.7, usage: { include: true } };
 	let last = '';
 	for (let i = 1; i <= 3; i++) {
 		const ac = new AbortController();
@@ -165,6 +198,7 @@ async function fetch_with_cfg(cfg: Cfg, messages: { role: string; content: strin
 			}
 			const out = text_of(cfg, json);
 			if (!out) throw new Error(`empty LLM response: ${JSON.stringify(json).slice(0, 400)}`);
+			record_usage(json);
 			return out;
 		} catch (e: any) {
 			last = e.message || String(e);
@@ -268,6 +302,7 @@ async function run(file: string) {
 	write_atomic(out, `# ${basename(file, '.r')}\n\n` + body.replace(/^<!-- done: .+ -->\n/gm, ''));
 	console.log(`\nwrite → ${out} (${bullets} conclusions)`);
 	console.log(`\ndone. ${n} step(s).`);
+	dump_usage();
 }
 
 async function main() {
@@ -314,6 +349,7 @@ rethink <file.r> [--fast]`);
 }
 
 main().catch((e) => {
+	dump_usage();
 	console.error(e.stack || e.message);
 	process.exit(1);
 });

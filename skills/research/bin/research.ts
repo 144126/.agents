@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // research "<question>" [--angle "..."]...
-// 3-phase: 9-think -> search (thinking decides) -> 9-think
+// 3-phase: think -> search (thinking decides) -> think
 // glm-5.3-flash via OpenRouter only
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -12,7 +12,36 @@ type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; ma
 type Hit = { url: string; title: string; excerpt: string };
 type Claim = { claim: string; quote: string; cited_primary: string | null; source_url: string };
 
-const die = (m: string): never => { console.error(m); process.exit(1); };
+const usages: any[] = [];
+function add_usage(a: any, b: any): any {
+	if (typeof b === 'number' && Number.isFinite(b)) return (typeof a === 'number' && Number.isFinite(a) ? a : 0) + b;
+	if (b && typeof b === 'object' && !Array.isArray(b)) {
+		const out: any = a && typeof a === 'object' && !Array.isArray(a) ? { ...a } : {};
+		for (const [k, v] of Object.entries(b)) out[k] = add_usage(out[k], v);
+		return out;
+	}
+	return b ?? a;
+}
+function record_usage(json: any) {
+	const u = json?.usage;
+	if (u && typeof u === 'object') {
+		usages.push(u);
+		console.log(`usage: ${JSON.stringify(u)}`);
+		vlog('usage', `openrouter usage`, u);
+	} else {
+		console.log('usage: (none in response)');
+		vlog('usage', `no usage in response`, { keys: json ? Object.keys(json).slice(0,20) : null });
+	}
+}
+function dump_usage() {
+	if (!usages.length) return;
+	const total = usages.reduce((a, u) => add_usage(a, u), {});
+	console.log(`usage calls: ${usages.length}`);
+	usages.forEach((u, i) => console.log(`usage ${i + 1}: ${JSON.stringify(u)}`));
+	console.log(`usage total: ${JSON.stringify(total)}`);
+	vlog('usage:total', `run usage`, { calls: usages.length, total });
+}
+const die = (m: string): never => { dump_usage(); console.error(m); process.exit(1); };
 
 // ── extremely verbose logging ──
 const VERBOSE = (() => {
@@ -142,7 +171,7 @@ function text_of(cfg: Cfg, json: any): string {
 }
 async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promise<string> {
 	const url = cfg.baseUrl + (cfg.api === 'responses' ? '/responses' : '/chat/completions');
-	const body = cfg.api === 'responses' ? { model: cfg.model, input: prompt, max_output_tokens: cfg.max_tokens } : { model: cfg.model, messages: [{ role: 'user', content: prompt }], max_tokens: cfg.max_tokens, temperature: isChat ? 0.7 : 0.2 };
+	const body = cfg.api === 'responses' ? { model: cfg.model, input: prompt, max_output_tokens: cfg.max_tokens, usage: { include: true } } : { model: cfg.model, messages: [{ role: 'user', content: prompt }], max_tokens: cfg.max_tokens, temperature: isChat ? 0.7 : 0.2, usage: { include: true } };
 	vlog('fetch_with_cfg:start', `LLM call start`, {
 		url, model: cfg.model, api: cfg.api, isChat,
 		prompt_chars: prompt.length, prompt_preview: trunc(prompt, 500),
@@ -185,9 +214,7 @@ async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promis
 			const out = text_of(cfg, json);
 			vlog('fetch_with_cfg:success', `extracted text attempt ${i}`, { out_len: out.length, preview: trunc(out, 500), attempt_duration_ms: Date.now()-attempt_t0 });
 			if (!out) throw new Error(`empty LLM response: ${JSON.stringify(json).slice(0, 400)}`);
-			// log token usage if present
-			if (json?.usage) vlog('fetch_with_cfg:usage', `token usage`, json.usage);
-			if (json?.usage?.total_tokens) vlog('fetch_with_cfg:tokens', `tokens total=${json.usage.total_tokens} prompt=${json.usage.prompt_tokens} completion=${json.usage.completion_tokens}`);
+			record_usage(json);
 			return out;
 		} catch (e: any) {
 			last = e.message || String(e);
@@ -229,7 +256,7 @@ async function llm_think(messages: { role: string; content: string }[]): Promise
 
 // --- thinking helpers (dynamic count — model decides how many angles) ---
 function think_prompt(preamble: string | null, leaf_s: string): string {
-	const p = `Think extremely deeply about this ONE angle. Do not look at prior conclusions.\n\nGlobal context:\n${preamble || '(none)'}\n\nAngle:\n${leaf_s}\n\nFrom first principles. Steelman both sides. Look for contradictions. Prefer concrete.\nGenerate as many atomic conclusions as this angle warrants — cover every distinct facet, contradiction, and implication thoroughly. Do not artificially limit yourself to 3-8; produce as many high-quality bullets as needed for complete coverage.\nOutput ONLY markdown bullets: "- <sentence>"`;
+	const p = `Think extremely deeply about this ONE angle. Do not look at prior conclusions.\n\nGlobal context:\n${preamble || '(none)'}\n\nAngle:\n${leaf_s}\n\nFrom first principles. Steelman both sides. Look for contradictions. Prefer concrete.\nGenerate as many atomic conclusions as this angle warrants — cover every distinct facet, contradiction, and implication thoroughly. Do not artificially limit yourself; produce as many high-quality bullets as needed for complete coverage.\nOutput ONLY markdown bullets: "- <sentence>"`;
 	vlog('think_prompt', `built think prompt`, { preamble_len: preamble?.length||0, leaf_len: leaf_s.length, total_len: p.length, leaf_preview: trunc(leaf_s,200) });
 	return p;
 }
@@ -260,7 +287,7 @@ async function genPreAngles(q: string): Promise<string[]> {
 	vlog('genPreAngles:start', `generating dynamic pre angles via LLM`, { q: trunc(q,200) });
 	const prompt = `You are planning deep research on: "${q}"
 
-Generate as many distinct thinking angles as needed to holistically cover this topic from every important perspective. Do not limit yourself to 9 — generate as many as the topic warrants for complete coverage (aim for 12-25 if the topic is broad, fewer if narrow, but always be thorough). Each angle should be a distinct lens that would produce non-overlapping insights. Cover definitions, evidence for/against, mechanisms, history, economics, technical details, alternatives, risks, controversies, methods, applications, future directions, and anything else relevant.
+Generate as many distinct thinking angles as needed to holistically cover this topic from every important perspective. Generate as many as the topic warrants for complete coverage, always be thorough. Each angle should be a distinct lens that would produce non-overlapping insights. Cover definitions, evidence for/against, mechanisms, history, economics, technical details, alternatives, risks, controversies, methods, applications, future directions, and anything else relevant.
 
 Return ONLY JSON array of strings: ["angle 1", "angle 2", ...]`;
 	try {
@@ -268,10 +295,10 @@ Return ONLY JSON array of strings: ["angle 1", "angle 2", ...]`;
 		const m = raw.match(/\[[\s\S]*\]/);
 		if (m) {
 			const arr = JSON.parse(m[0]);
-			if (Array.isArray(arr) && arr.length >= 5) {
+			if (Array.isArray(arr) && arr.length) {
 				const cleaned = arr.map((s:any)=>String(s).trim()).filter(Boolean);
 				vlog('genPreAngles:llm', `LLM generated`, { count: cleaned.length });
-				return cleaned;
+				if (cleaned.length) return cleaned;
 			}
 		}
 	} catch (e:any) { vlog('genPreAngles:fail', `LLM gen failed, fallback`, { err: e.message }); }
@@ -346,7 +373,7 @@ async function genPostAngles(q: string, excerpt: string): Promise<string[]> {
 
 Gathered excerpt:\n${ctx.slice(0,6000)}
 
-Generate as many distinct synthesis angles as needed to holistically synthesize and critique the findings. Do not limit yourself to 9 — generate as many as warranted for complete, rigorous synthesis (aim for 12-25 if findings are rich). Cover agreement vs contradiction, strongest evidence for/against, numbers that held/failed, unknowns, misconceptions corrected, practical implications, bias assessment, primary source quality, gaps, contrarian takes still standing, confidence levels, alternative explanations, failure modes, and actionable takeaways.
+Generate as many distinct synthesis angles as needed to holistically synthesize and critique the findings. Generate as many as warranted for complete, rigorous synthesis. Cover agreement vs contradiction, strongest evidence for/against, numbers that held/failed, unknowns, misconceptions corrected, practical implications, bias assessment, primary source quality, gaps, contrarian takes still standing, confidence levels, alternative explanations, failure modes, and actionable takeaways.
 
 Return ONLY JSON array of strings: ["angle 1", "angle 2", ...]`;
 	try {
@@ -354,10 +381,10 @@ Return ONLY JSON array of strings: ["angle 1", "angle 2", ...]`;
 		const m = raw.match(/\[[\s\S]*\]/);
 		if (m) {
 			const arr = JSON.parse(m[0]);
-			if (Array.isArray(arr) && arr.length >= 5) {
+			if (Array.isArray(arr) && arr.length) {
 				const cleaned = arr.map((s:any)=>String(s).trim()).filter(Boolean);
 				vlog('genPostAngles:llm', `LLM generated`, { count: cleaned.length });
-				return cleaned;
+				if (cleaned.length) return cleaned;
 			}
 		}
 	} catch (e:any) { vlog('genPostAngles:fail', `LLM gen failed, fallback`, { err: e.message }); }
@@ -512,14 +539,14 @@ async function run_thinking_phase(slug: string, question: string, phase: 'pre' |
 async function extract_search_queries(preThinkText: string, question: string): Promise<string[]> {
 	const t0 = Date.now();
 	vlog('extract_search_queries:start', `deriving queries`, { question: trunc(question,200), preThink_chars: preThinkText.length, preThink_preview: trunc(preThinkText, 500) });
-	const prompt = `From the following 9-angle pre-thinking about question, extract 6-14 distinct web search queries that together cover the whole question. No duplicates. Output JSON array of strings only.\n\nQuestion: ${question}\n\nPre-thinking:\n${preThinkText.slice(0,24000)}\n\nReturn ONLY JSON: ["query1","query2",...]`;
+	const prompt = `From the following pre-thinking about question, extract distinct web search queries that together cover the whole question. No duplicates. Output JSON array of strings only.\n\nQuestion: ${question}\n\nPre-thinking:\n${preThinkText.slice(0,24000)}\n\nReturn ONLY JSON: ["query1","query2",...]`;
 	vlog('extract_search_queries:prompt', `prompt built`, { prompt_len: prompt.length, preview: trunc(prompt,600) });
 	const raw = await llm(prompt);
 	vlog('extract_search_queries:raw', `llm returned`, { raw_len: raw.length, preview: trunc(raw,600), duration_ms: Date.now()-t0 });
 	const m = raw.match(/\[[\s\S]*\]/);
 	if (!m) { vlog('extract_search_queries:no_match', `no JSON array found, fallback to [question]`); return [question]; }
 	vlog('extract_search_queries:match', `found JSON array`, { match_len: m[0].length, preview: trunc(m[0],400) });
-	try { const arr = JSON.parse(m[0]); vlog('extract_search_queries:parsed', `parsed array`, { count: arr.length, arr }); if (Array.isArray(arr) && arr.length) return arr.map((s:any)=>String(s).trim()).filter(Boolean).slice(0,16); } catch (e:any) { vlog('extract_search_queries:parse_fail', `json parse fail`, { err: e.message }); }
+	try { const arr = JSON.parse(m[0]); vlog('extract_search_queries:parsed', `parsed array`, { count: arr.length, arr }); if (Array.isArray(arr) && arr.length) return arr.map((s:any)=>String(s).trim()).filter(Boolean); } catch (e:any) { vlog('extract_search_queries:parse_fail', `json parse fail`, { err: e.message }); }
 	return [question];
 }
 
@@ -744,6 +771,7 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 	if(!existsSync(pub)) { vlog('run:no_pub', `no ledger at ${pub}`); die('incomplete — no ledger'); }
 	console.log(`\nwrite → ${pub}`);
 	console.log('0 — done');
+	dump_usage();
 	vlog('run:done', `run complete`, { pub, duration_total_ms: Date.now()-run_t0, duration_total_s: ((Date.now()-run_t0)/1000).toFixed(1) });
 	if (VERBOSE_LOG_FILE) vlog('run:verbose_log_file', `verbose log at ${VERBOSE_LOG_FILE}`, { bytes: existsSync(VERBOSE_LOG_FILE)?statSync(VERBOSE_LOG_FILE).size:0 });
 }
@@ -773,4 +801,4 @@ async function main(){
 	await run(question,slug,angles);
 	vlog('main:done', `main done`, { duration_ms: Date.now()-t0 });
 }
-main().catch(e=>{ vlog('main:uncaught', `uncaught error`, { err: e.message, stack: trunc(e.stack||'',2000) }); console.error(e.stack||e.message); process.exit(1); });
+main().catch(e=>{ dump_usage(); vlog('main:uncaught', `uncaught error`, { err: e.message, stack: trunc(e.stack||'',2000) }); console.error(e.stack||e.message); process.exit(1); });
