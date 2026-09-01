@@ -1,599 +1,294 @@
 #!/usr/bin/env bun
-// research "<question>" [--angle "..."] [--think] [--slug s] [--resume slug] [--verbose]
-// phases: (opt think pre) -> search -> scrape+extract -> gate -> write -> (opt think post -> synthesis.md)
+// research "<question>" [--angle q] [--slug s] [--resume s] [--verbose] [--model p/id]
+// search -> scrape -> extract -> gate -> ledger. No thinking. 1 LLM for queries + 1 per page.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, appendFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
-type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses'; reasoning?: string };
+type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; reasoning?: string };
 type Hit = { url: string; title: string; excerpt: string };
-type Claim = { claim: string; quote: string; cited_primary: string | null; source_url: string };
-type State = {
-	question: string;
-	slug: string;
-	done: string[];                // "search:a01" | "page:<pid>" | "phase:pre-think" | "phase:post-think" | "phase:search" | "phase:pages"
-	angles?: string[];
-	done_think_pre?: string[];
-	done_think_post?: string[];
-	phase?: string;
-};
+type State = { question: string; slug: string; done: string[]; angles?: string[] };
 
 const PROVIDERS: Record<string, { baseUrl: () => string; apiKey: () => string }> = {
-	'amazon-bedrock-mantle': {
-		baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''),
-		apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '',
-	},
-	openrouter: {
-		baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
-		apiKey: () => process.env.OPENROUTER_API_KEY || '',
-	},
+	'amazon-bedrock-mantle': { baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''), apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '' },
+	openrouter: { baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''), apiKey: () => process.env.OPENROUTER_API_KEY || '' },
 };
-
 let CFG: Cfg | null = null;
 const ROOT = resolve(homedir(), 'search');
-const THINK = resolve(homedir(), 'think');
-const CND_TS = resolve(homedir(), '.agents/skills/condense-search/cnd.ts');
-const CND_PY = resolve(homedir(), '.agents/skills/condense-search/cnd.py');
-const CND = existsSync(CND_TS) ? CND_TS : CND_PY;
+const VERBOSE = process.argv.includes('--verbose') || process.env.RESEARCH_VERBOSE === '1';
+const N = 5; // concurrency
+const MAX_Q = 6; // max search queries
+const MAX_PAGES = 10;
 
-const CONCURRENCY = 5;
-const MAX_ANGLES = 12;
-const MAX_PRE_ANGLES = 10;
-const MAX_POST_ANGLES = 10;
-const VERBOSE = process.env.RESEARCH_VERBOSE === '1' || process.argv.includes('--verbose');
-const QUIET = process.env.RESEARCH_QUIET === '1' || process.argv.includes('--quiet');
+const die = (m: string): never => { console.error(m); process.exit(1); };
+const log = (m: string) => { if (VERBOSE) console.error(m); };
+const slugify = (s: string) => (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'topic').slice(0, 64);
+const sha1 = (s: string) => createHash('sha1').update(s).digest('hex');
+const pid_of = (url: string) => sha1(url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '')).slice(0, 16);
+const write_atomic = (p: string, t: string) => { mkdirSync(dirname(p), { recursive: true }); const tmp = p + '.tmp'; writeFileSync(tmp, t); renameSync(tmp, p); };
 
-function log(msg: string) { if (VERBOSE && !QUIET) console.error(msg); }
-function die(m: string): never { console.error(m); process.exit(1); }
-
-// ——— utils ———
-function slugify(s: string): string { return (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'topic').slice(0, 64); }
-function parse_model(raw: string): { provider: string; model: string } {
-	const i = raw.indexOf('/');
-	if (i < 1) die('model must be provider/id, e.g. openrouter/z-ai/glm-5.3-flash');
-	return { provider: raw.slice(0, i), model: raw.slice(i + 1) };
-}
-function make_cfg(spec: string, reasoning: string): Cfg {
-	const { provider, model } = parse_model(spec);
-	const p = PROVIDERS[provider];
-	if (!p) die(`unknown provider ${provider}. known: ${Object.keys(PROVIDERS).join(', ')}`);
-	const apiKey = p.apiKey();
-	if (!apiKey) die(`no api key for ${provider}`);
-	return { baseUrl: p.baseUrl(), apiKey, model, timeout: 600000, max_tokens: 7000, api: 'chat', reasoning: reasoning || undefined };
-}
-
-// async spawn, not spawnSync
-function sh(cmd: string, args: string[], timeoutMs = 90000): Promise<{ ok: boolean; out: string; err: string }> {
+// async spawn
+function sh(cmd: string, args: string[], ms = 90000): Promise<{ ok: boolean; out: string; err: string }> {
 	return new Promise(res => {
-		const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-		let out = '', err = '';
-		let timed = false;
-		const t = setTimeout(() => { timed = true; child.kill('SIGTERM'); }, timeoutMs);
-		child.stdout.on('data', d => { out += d.toString(); if (out.length > 20 * 1024 * 1024) child.kill('SIGTERM'); });
-		child.stderr.on('data', d => { err += d.toString(); });
-		child.on('error', e => { clearTimeout(t); res({ ok: false, out, err: e.message }); });
-		child.on('close', code => {
-			clearTimeout(t);
-			if (timed) res({ ok: false, out, err: err + ' timeout' });
-			else res({ ok: code === 0, out, err });
-		});
+		const c = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+		let out = '', err = '', to = false;
+		const t = setTimeout(() => { to = true; c.kill('SIGTERM'); }, ms);
+		c.stdout.on('data', d => { out += d.toString(); if (out.length > 20 * 1024 * 1024) c.kill('SIGTERM'); });
+		c.stderr.on('data', d => { err += d.toString(); });
+		c.on('error', e => { clearTimeout(t); res({ ok: false, out, err: e.message }); });
+		c.on('close', code => { clearTimeout(t); res({ ok: code === 0 && !to, out, err: to ? err + ' timeout' : err }); });
 	});
 }
-function write_atomic(path: string, text: string) {
-	mkdirSync(dirname(path), { recursive: true });
-	const tmp = path + '.tmp';
-	writeFileSync(tmp, text);
-	renameSync(tmp, path);
-}
-function pid_of(url: string): string {
-	const u = url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
-	return createHash('sha1').update(u).digest('hex').slice(0, 16);
+function pLimit(n: number) {
+	let a = 0; const q: Array<() => void> = [];
+	return async <T>(fn: () => Promise<T>): Promise<T> => {
+		if (a >= n) await new Promise<void>(r => q.push(r));
+		a++; try { return await fn(); } finally { a--; const f = q.shift(); if (f) f(); }
+	};
 }
 
-// ——— LLM ———
-function text_of(cfg: Cfg, json: unknown): string {
-	const j = json as Record<string, unknown>;
-	if (cfg.api === 'responses') {
-		if (typeof (j as { output_text?: unknown }).output_text === 'string' && ((j as { output_text: string }).output_text.trim())) return (j as { output_text: string }).output_text.trim();
-		const parts: string[] = [];
-		for (const item of ((j as { output?: unknown[] }).output || []) as Array<{ content?: Array<{ text?: string }> }>) for (const c of (item?.content || [])) if (typeof c?.text === 'string') parts.push(c.text);
-		return parts.join('\n').trim();
-	}
-	const ch = (j as { choices?: Array<{ message?: { content?: unknown }; text?: unknown }> }).choices?.[0];
-	const c = ch?.message?.content ?? ch?.text ?? '';
-	if (typeof c === 'string') return c.trim();
-	if (Array.isArray(c)) return (c as Array<{ text?: string; content?: string }>).map(x => x.text || x.content || '').join('\n').trim();
-	return '';
+// LLM — chat only
+function parse_model(raw: string) { const i = raw.indexOf('/'); if (i < 1) die('model must be provider/id'); return { provider: raw.slice(0, i), model: raw.slice(i + 1) }; }
+function make_cfg(spec: string, reasoning: string): Cfg {
+	const { provider, model } = parse_model(spec);
+	const p = PROVIDERS[provider]; if (!p) die(`unknown provider ${provider}`);
+	const k = p.apiKey(); if (!k) die(`no api key for ${provider}`);
+	return { baseUrl: p.baseUrl(), apiKey: k, model, timeout: 600000, max_tokens: 6000, reasoning: reasoning || undefined };
 }
-
-async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promise<string> {
-	const url = cfg.baseUrl + (cfg.api === 'responses' ? '/responses' : '/chat/completions');
-	const body: Record<string, unknown> = cfg.api === 'responses'
-		? { model: cfg.model, input: prompt, max_output_tokens: cfg.max_tokens }
-		: { model: cfg.model, messages: [{ role: 'user', content: prompt }], max_tokens: cfg.max_tokens, temperature: isChat ? 0.7 : 0.2 };
-	if (cfg.reasoning) (body as Record<string, unknown>).reasoning = { effort: cfg.reasoning };
+async function llm(prompt: string): Promise<string> {
+	if (!CFG) die('no cfg');
+	const url = CFG.baseUrl + '/chat/completions';
+	const body: Record<string, unknown> = { model: CFG.model, messages: [{ role: 'user', content: prompt }], max_tokens: CFG.max_tokens, temperature: 0.2 };
+	if (CFG.reasoning) (body as Record<string, unknown>).reasoning = { effort: CFG.reasoning };
 	for (let i = 1; i <= 3; i++) {
-		const ac = new AbortController();
-		const t = setTimeout(() => ac.abort(), cfg.timeout);
+		const ac = new AbortController(); const t = setTimeout(() => ac.abort(), CFG!.timeout);
 		try {
-			const res = await fetch(url, {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${cfg.apiKey}`,
-					'Content-Type': 'application/json',
-					'HTTP-Referer': 'https://pi.dev',
-					'X-OpenRouter-Title': 'pi',
-				},
-				body: JSON.stringify(body), signal: ac.signal
-			});
-			const text = await res.text();
-			let json: unknown = null; try { json = JSON.parse(text); } catch {}
-			if (!res.ok) {
-				if (i < 3 && (res.status === 429 || res.status >= 500)) { await new Promise(r => setTimeout(r, i * 2000)); continue; }
-				throw new Error(`LLM ${text.slice(0, 800)} (model=${cfg.model})`);
-			}
-			const out = text_of(cfg, json);
-			if (!out) throw new Error(`empty LLM response: ${JSON.stringify(json).slice(0, 400)}`);
+			const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${CFG.apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://pi.dev', 'X-OpenRouter-Title': 'pi' }, body: JSON.stringify(body), signal: ac.signal });
+			const txt = await r.text(); let j: unknown = null; try { j = JSON.parse(txt); } catch {}
+			if (!r.ok) { if (i < 3 && (r.status === 429 || r.status >= 500)) { await new Promise(r => setTimeout(r, i * 2000)); continue; } throw new Error(txt.slice(0, 800)); }
+			const ch = (j as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
+			const out = typeof ch === 'string' ? ch.trim() : Array.isArray(ch) ? (ch as Array<{ text?: string }>).map(x => x.text || '').join('\n').trim() : '';
+			if (!out) throw new Error('empty LLM response');
 			return out;
-		} catch (e: unknown) {
-			const msg = (e as Error).message || String(e);
-			if (i === 3) throw new Error(msg);
-			await new Promise(r => setTimeout(r, i * 2000));
-		} finally { clearTimeout(t); }
+		} catch (e: unknown) { if (i === 3) throw e; await new Promise(r => setTimeout(r, i * 2000)); } finally { clearTimeout(t); }
 	}
 	throw new Error('unreachable');
 }
-async function llm(prompt: string): Promise<string> {
-	if (!CFG) die('no model cfg');
-	return fetch_with_cfg(CFG, prompt, false);
-}
-async function llm_think(messages: { role: string; content: string }[]): Promise<string> {
-	if (!CFG) die('no model cfg');
-	return fetch_with_cfg(CFG, messages.map(m => m.content).join('\n\n'), true);
-}
 
-// ——— concurrency ———
-function pLimit(n: number) {
-	let active = 0;
-	const q: Array<() => void> = [];
-	const run = async <T>(fn: () => Promise<T>): Promise<T> => {
-		if (active >= n) await new Promise<void>(res => q.push(res));
-		active++;
-		try { return await fn(); } finally { active--; const nxt = q.shift(); if (nxt) nxt(); }
-	};
-	return run;
-}
-
-// ——— thinking ———
-function think_prompt(preamble: string | null, leaf_s: string): string {
-	return `Think deeply about this ONE angle. Do not look at prior conclusions.\n\nGlobal context:\n${preamble || '(none)'}\n\nAngle:\n${leaf_s}\n\nSteelman both sides. Look for contradictions. Prefer concrete.\nOutput ONLY markdown bullets: "- <sentence>" (one idea per bullet)`;
-}
-function parse_bullets(raw: string): string[] {
-	const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
-	const bullets = lines.filter(l => /^[-*•]\s+/.test(l)).map(l => l.replace(/^[-*•]\s+/, '').trim()).filter(Boolean);
-	if (bullets.length) return bullets.map(b => `- ${b}`);
-	return lines.filter(l => l.length > 15 && !l.startsWith('{') && !l.startsWith('[')).map(l => (l.startsWith('-') ? l : `- ${l}`));
-}
-function norm_key(b: string): string { return b.toLowerCase().replace(/^[-*•]\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim(); }
-function append_dedup(existing: string, neu: string[]): string {
-	const have = new Set(existing.split('\n').filter(s => s.trim().startsWith('-')).map(norm_key));
-	const add = neu.filter(b => { const k = norm_key(b); if (!k || have.has(k)) return false; have.add(k); return true; });
-	const head = existing.trim();
-	return (head ? head + '\n' : '') + (add.length ? add.join('\n') + '\n' : head ? '\n' : '');
-}
-
-async function genPreAngles(q: string): Promise<string[]> {
-	const prompt = `You are planning research on: "${q}"\nGenerate up to ${MAX_PRE_ANGLES} distinct thinking angles that together holistically cover this topic. Each angle is a distinct lens producing non-overlapping insights. Cover definitions, evidence for/against, mechanisms, history, economics, risks, alternatives, controversies, methods, applications.\nReturn ONLY JSON array of strings: ["angle 1", ...]`;
-	try {
-		const raw = await llm(prompt);
-		const m = raw.match(/\[[\s\S]*\]/);
-		if (m) {
-			const arr = JSON.parse(m[0]) as unknown;
-			if (Array.isArray(arr) && arr.length) {
-				const cleaned = (arr as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_PRE_ANGLES);
-				if (cleaned.length) return cleaned;
-			}
-		}
-	} catch {}
-	return [
-		`core definitions and first principles of ${q}`,
-		`evidence for: ${q}`,
-		`evidence against: ${q}`,
-		`statistics and numbers: ${q}`,
-		`history and timeline of ${q}`,
-		`risks and failure modes of ${q}`,
-		`costs and economics of ${q}`,
-		`alternative approaches to ${q}`,
-		`mechanisms underlying ${q}`,
-		`open questions about ${q}`,
-	].slice(0, MAX_PRE_ANGLES);
-}
-
-async function genPostAngles(q: string, excerpt: string): Promise<string[]> {
-	const ctx = excerpt.slice(0, 8000);
-	const prompt = `You have web research on: "${q}"\n\nExcerpt:\n${ctx.slice(0, 6000)}\n\nGenerate up to ${MAX_POST_ANGLES} distinct synthesis angles to critique findings. Cover agreement vs contradiction, strongest evidence for/against, numbers that held/failed, unknowns, bias, gaps, contrarian takes, confidence, actionable takeaways.\nReturn ONLY JSON array of strings: ["angle 1", ...]`;
-	try {
-		const raw = await llm(prompt);
-		const m = raw.match(/\[[\s\S]*\]/);
-		if (m) {
-			const arr = JSON.parse(m[0]) as unknown;
-			if (Array.isArray(arr) && arr.length) {
-				const cleaned = (arr as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_POST_ANGLES);
-				if (cleaned.length) return cleaned;
-			}
-		}
-	} catch {}
-	return [
-		`synthesize overall answer to: ${q} — given:\n${ctx.slice(0, 1500)}`,
-		`strongest evidence for ${q} from gathered sources`,
-		`strongest evidence against ${q}`,
-		`where sources agree vs contradict on ${q}`,
-		`numbers that held up under scrutiny for ${q}`,
-		`what remains unknown about ${q} after search`,
-		`practical implications of ${q}`,
-		`bias and source quality for ${q}`,
-		`gaps where more research needed on ${q}`,
-		`confidence we should assign to claims about ${q}`,
-	].slice(0, MAX_POST_ANGLES);
-}
-
-async function run_thinking_phase(slug: string, question: string, phase: 'pre' | 'post', angles: string[], wd: string, state: State): Promise<string> {
-	const label = phase;
-	const thinkFile = resolve(THINK, `${slug}-research-${label}.r`);
-	const concFile = resolve(THINK, `${slug}-research-${label}.conclusions.md`);
-	const finalMd = resolve(THINK, `${slug}-research-${label}.md`);
-	mkdirSync(THINK, { recursive: true });
-
-	if (!existsSync(thinkFile)) {
-		const tree: Record<string, unknown> = { _: question };
-		angles.forEach((s, i) => { tree[`a${String(i + 1).padStart(2, '0')}`] = { s, d: 0 }; });
-		write_atomic(thinkFile, JSON.stringify(tree, null, '\t') + '\n');
-		console.log(`think init ${label}: ${thinkFile} (${angles.length} leaves)`);
-	}
-
-	const loadTree = (): { preamble: string | null; tree: Record<string, { s: string; d: number }> } => {
-		const j = JSON.parse(readFileSync(thinkFile, 'utf8')) as Record<string, unknown>;
-		const pre = typeof j._ === 'string' ? (j._ as string) : null; delete j._;
-		return { preamble: pre, tree: j as Record<string, { s: string; d: number }> };
-	};
-	const saveTree = (pre: string | null, tree: Record<string, { s: string; d: number }>) => {
-		const body: Record<string, unknown> = pre === null ? {} : { _: pre }; Object.assign(body, tree);
-		write_atomic(thinkFile, JSON.stringify(body, null, '\t') + '\n');
-	};
-
-	const doneKey = `done_think_${label}` as keyof State;
-	let doneLeaves = new Set<string>((state[doneKey] as unknown as string[]) || []);
-	if (existsSync(concFile)) {
-		const c = readFileSync(concFile, 'utf8');
-		for (const m of c.matchAll(/<!-- done: (.+) -->/g)) doneLeaves.add(m[1]);
-	}
-
-	console.log(`\n=== thinking ${label} (${angles.length} steps, concurrency ${CONCURRENCY}) ===`);
-
-	const limit = pLimit(CONCURRENCY);
-	const pending = angles.map((_, idx) => `a${String(idx + 1).padStart(2, '0')}`).filter(id => !doneLeaves.has(id));
-
-	// fetch all in parallel, then merge sequentially to avoid races
-	type Res = { id: string; bullets: string[]; raw: string };
-	const results: Res[] = [];
-	const errors: string[] = [];
-
-	await Promise.all(pending.map(id => limit(async () => {
-		const { preamble, tree } = loadTree();
-		const node = tree[id];
-		if (!node || node.d === 1) return;
-		console.log(`  think ${label} ${id}: ${node.s.slice(0, 100)}…`);
-		try {
-			const raw = await llm_think([{ role: 'user', content: think_prompt(preamble, node.s) }]);
-			const bullets = parse_bullets(raw);
-			if (!bullets.length) { errors.push(`${id}: no bullets`); log(`${id} no bullets raw=${raw.slice(0,120)}`); return; }
-			results.push({ id, bullets, raw });
-		} catch (e: unknown) { errors.push(`${id}: ${(e as Error).message}`); }
-	})));
-
-	// merge in original order
-	results.sort((a, b) => a.id.localeCompare(b.id));
-	let existing = existsSync(concFile) ? readFileSync(concFile, 'utf8') : '';
-	for (const r of results) {
-		r.bullets.forEach(b => console.log(`    ${b}`));
-		existing = append_dedup(existing, r.bullets) + `<!-- done: ${r.id} -->\n`;
-		write_atomic(concFile, existing);
-		const { preamble, tree } = loadTree();
-		if (tree[r.id]) { tree[r.id].d = 1; saveTree(preamble, tree); }
-		doneLeaves.add(r.id);
-		(state[doneKey] as unknown as string[]) = [...doneLeaves];
-		write_atomic(resolve(wd, 'state.json'), JSON.stringify(state, null, '\t') + '\n');
-	}
-	if (errors.length) errors.forEach(e => console.error(`  ! ${e}`));
-
-	if (existsSync(concFile)) {
-		const body = readFileSync(concFile, 'utf8');
-		write_atomic(finalMd, `# ${slug} think ${label}\n\n` + body.replace(/^<!-- done: .+ -->\n/gm, ''));
-		console.log(`think ${label} → ${finalMd} (${(body.match(/^- /gm) || []).length} bullets)`);
-	}
-	return existsSync(concFile) ? readFileSync(concFile, 'utf8') : '';
-}
-
-// ——— search helpers ———
-async function extract_search_queries(preThinkText: string, question: string): Promise<string[]> {
-	const prompt = `From pre-thinking about question, extract distinct web search queries covering the whole question. No duplicates. Output JSON array only.\n\nQuestion: ${question}\n\nPre-thinking:\n${preThinkText.slice(0, 24000)}\n\nReturn ONLY JSON: ["query1","query2",...]`;
-	try {
-		const raw = await llm(prompt);
-		const m = raw.match(/\[[\s\S]*\]/);
-		if (m) {
-			const arr = JSON.parse(m[0]) as unknown;
-			if (Array.isArray(arr) && arr.length) {
-				const out = (arr as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_ANGLES);
-				if (out.length) return out;
-			}
-		}
-	} catch {}
-	return [question];
-}
-
+// search / scrape
 function parse_hits(raw: string): Hit[] {
 	let d: unknown; try { d = JSON.parse(raw); } catch { return []; }
-	const obj = d as Record<string, unknown>;
-	const rows = Array.isArray(d) ? d as unknown[] : (obj.results as unknown[]) || (obj.data as Record<string, unknown>)?.web as unknown[] || (obj as Record<string, unknown>).web as unknown[] || [];
+	const o = d as Record<string, unknown>;
+	const rows = Array.isArray(d) ? d as unknown[] : (o.results as unknown[]) || (o.data as Record<string, unknown>)?.web as unknown[] || [];
 	if (!Array.isArray(rows)) return [];
 	const out: Hit[] = [];
 	for (const r of rows as Array<Record<string, unknown>>) {
-		const url = String((r.url || r.link || '') as string);
-		if (!url.startsWith('http')) continue;
-		const excerpts = Array.isArray(r.excerpts) ? (r.excerpts as string[]).join('\n') : String((r.excerpt || r.description || r.snippet || '') as string);
-		out.push({ url, title: String((r.title || url) as string), excerpt: String(excerpts) });
+		const url = String(r.url || r.link || ''); if (!url.startsWith('http')) continue;
+		const ex = Array.isArray(r.excerpts) ? (r.excerpts as string[]).join('\n') : String(r.excerpt || r.description || r.snippet || '');
+		out.push({ url, title: String(r.title || url), excerpt: String(ex) });
 	}
 	return out;
 }
-async function search_angle(angle: string, dest: string): Promise<Hit[]> {
-	const r = await sh('firecrawl', ['search', angle, '--limit', '9', '--json', '-o', dest], 90000);
-	if (!existsSync(dest)) { console.error(`  ! search failed: ${r.err.slice(0, 200) || r.out.slice(0, 200)}`); return []; }
-	const raw = readFileSync(dest, 'utf8');
-	return parse_hits(raw);
+async function search_angle(q: string, dest: string): Promise<Hit[]> {
+	const r = await sh('firecrawl', ['search', q, '--limit', '9', '--json', '-o', dest], 90000);
+	if (!existsSync(dest)) { console.error(`  ! search failed: ${r.err.slice(0, 120) || r.out.slice(0, 120)}`); return []; }
+	return parse_hits(readFileSync(dest, 'utf8'));
 }
 async function scrape_page(url: string, dest: string): Promise<string> {
 	const r = await sh('firecrawl', ['scrape', url, '-o', dest], 90000);
-	if (!existsSync(dest)) { console.error(`  ! scrape failed ${url}: ${r.err.slice(0, 160)}`); return ''; }
+	if (!existsSync(dest)) return '';
 	return readFileSync(dest, 'utf8');
 }
+
+// extract
 function extract_prompt(url: string, page: string): string {
-	return `Extract quote-anchored claims from this ONE page. Invent nothing.\nReturn ONLY JSON, no markdown fence:\n{"source_url":"${url}","claims":[{"claim":"atomic sentence with scope","quote":"verbatim ≤40 words from the page","cited_primary":null}]}\nRules: quote verbatim from the page; every number/date in claim must sit in quote; one number per claim; one idea per claim; empty claims array is valid.\n\nPAGE:\n${page.slice(0, 24000)}`;
+	return `Extract quote-anchored claims from this ONE page. Invent nothing.\nReturn ONLY JSON: {"source_url":"${url}","claims":[{"claim":"atomic sentence","quote":"verbatim ≤40 words","cited_primary":null}]}\nRules: quote verbatim; every number/date in claim must be in quote; one number per claim; empty array valid.\n\nPAGE:\n${page.slice(0, 24000)}`;
 }
-function parse_extract(raw: string, url: string): Claim[] {
+function parse_extract(raw: string, url: string) {
 	const m = raw.match(/\{[\s\S]*\}/); if (!m) return [];
 	try {
 		const d = JSON.parse(m[0]) as { claims?: Array<{ claim?: unknown; quote?: unknown; cited_primary?: unknown }>; source_url?: string };
-		const claims = Array.isArray(d.claims) ? d.claims : [];
-		return claims.filter(c => c && typeof c.claim === 'string' && typeof c.quote === 'string').map(c => ({
-			claim: String(c.claim).trim(), quote: String(c.quote).trim(), cited_primary: (c.cited_primary as string) || null, source_url: d.source_url || url
-		}));
+		const cs = Array.isArray(d.claims) ? d.claims : [];
+		return cs.filter(c => typeof c.claim === 'string' && typeof c.quote === 'string').map(c => ({ claim: String(c.claim).trim(), quote: String(c.quote).trim(), cited_primary: (c.cited_primary as string) || null, source_url: d.source_url || url }));
 	} catch { return []; }
 }
-async function cnd(args: string[]): Promise<string> {
-	const isTs = CND.endsWith('.ts');
-	const tries: Array<[string, string[]]> = isTs
-		? [['bun', [CND, ...args]], ['npx', ['--yes', 'tsx', CND, ...args]]]
-		: [['python3', [CND, ...args]]];
-	if (isTs && existsSync(CND_PY)) tries.push(['python3', [CND_PY, ...args]]);
-	let last = '';
-	for (const [cmd, a] of tries) {
-		const r = await sh(cmd, a, 30000);
-		if (r.ok) return r.out;
-		last = r.err || r.out;
-	}
-	die(`cnd ${args[0]} failed: ${last.slice(0, 400)}`);
+
+// gate — inline from cnd.ts (minimal)
+const NUM_RE = /\d[\d,]*(?:\.\d+)?\s?(?:%|x|×)?/g;
+function norm_ws(s: string) { return (s || '').replace(/\s+/g, ' ').trim(); }
+function norm_key(s: string) { return norm_ws(s).toLowerCase().replace(/[^a-z0-9]+/g, ''); }
+function normalize_url(url: string) { try { const u = new URL(url.trim()); let h = u.hostname.toLowerCase().replace(/^www\./, ''); const q = [...u.searchParams.entries()].filter(([k]) => !['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'ref', 'fbclid', 'gclid'].includes(k.toLowerCase())); q.sort((a, b) => a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])); const qs = q.map(([k, v]) => v ? `${k}=${v}` : k).join('&'); const path = (u.pathname || '').replace(/\/+$/, ''); return `${h}${path}${qs ? `?${qs}` : ''}`; } catch { return url.trim().toLowerCase(); } }
+function domain_of(url: string) { try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; } }
+function registrable_domain(url: string) { const h = domain_of(url).split('.'); return h.length >= 2 ? h.slice(-2).join('.') : domain_of(url); }
+function quote_in_text(q: string, t: string) { if (!q?.trim() || !t) return false; if (t.includes(q)) return true; const qk = norm_key(q); return !!qk && norm_key(t).includes(qk); }
+function parse_nums(s: string) { const out = new Set<string>(); if (!s) return out; NUM_RE.lastIndex = 0; let m: RegExpExecArray | null; while ((m = NUM_RE.exec(s)) !== null) { const tok = m[0].replace(/\s+/g, '').replace(/,/g, '').replace(/×/g, 'x').toLowerCase(); if (/\d/.test(tok)) out.add(tok); } return out; }
+function gate_claim(c: Record<string, unknown>, text: string) {
+	const g: Record<string, unknown> = { ...c }; const q = String(g.quote || '');
+	const found = quote_in_text(q, text); (g as Record<string, unknown>).quote_found = found;
+	const need = parse_nums(String(g.claim || '')); const have = found ? parse_nums(q) : new Set<string>();
+	(g as Record<string, unknown>).missing_numbers = [...need].filter(x => !have.has(x));
+	(g as Record<string, unknown>).verified = !!(found && (g as { missing_numbers: string[] }).missing_numbers.length === 0);
+	const qk = norm_key(q); (g as Record<string, unknown>).echo_key = qk.length >= 24 ? 'qk:' + qk.slice(0, 48) : 'h:' + sha1(norm_key(String(g.claim || '')) + String(g.source_url || '')).slice(0, 12);
+	(g as Record<string, unknown>).unit = registrable_domain(String(g.source_url || '')) || 'u:' + sha1(String(g.source_url || '?')).slice(0, 10);
+	return g;
+}
+function assign_status(gated: Record<string, unknown>[]) {
+	const byEcho = new Map<string, Set<string>>(); for (const g of gated) if (g.verified) { const k = String(g.echo_key); if (!byEcho.has(k)) byEcho.set(k, new Set()); byEcho.get(k)!.add(String(g.unit)); }
+	const byClaim = new Map<string, Set<string>>(); for (const g of gated) if (g.verified) { const copied = (byEcho.get(String(g.echo_key))?.size || 0) >= 2; (g as Record<string, unknown>).origin = copied ? 'copy:' + g.echo_key : 'dom:' + g.unit; const k = norm_key(String(g.claim || '')); if (!byClaim.has(k)) byClaim.set(k, new Set()); byClaim.get(k)!.add(String((g as Record<string, unknown>).origin)); }
+	for (const g of gated) { const n = g.verified ? (byClaim.get(norm_key(String(g.claim || '')))?.size || 0) : 0; (g as Record<string, unknown>).indep_count = n; (g as Record<string, unknown>).status = n >= 2 ? 'CORROBORATED' : g.verified ? 'SINGLE' : 'UNCHECKED'; }
+	return gated;
+}
+function render_ledger(meta: { slug: string; subject: string; question: string }, gated: Record<string, unknown>[], sources: Array<{ url: string; title: string }>) {
+	const ORDER: Record<string, number> = { CORROBORATED: 0, SINGLE: 1, UNCHECKED: 2 };
+	const TITLES: Record<string, string> = { CORROBORATED: 'Corroborated (≥2 independent origins)', SINGLE: 'Single-source', UNCHECKED: 'Unchecked (quote or figure check failed)' };
+	const shown = new Set<string>(); const sec: Record<string, string[]> = { CORROBORATED: [], SINGLE: [], UNCHECKED: [] };
+	const sorted = [...gated].sort((a, b) => (ORDER[String(a.status)] - ORDER[String(b.status)]) || (Number(b.indep_count) - Number(a.indep_count)));
+	for (const g of sorted) { const k = String(g.echo_key); if (shown.has(k)) continue; shown.add(k); const peers = gated.filter(r => r.echo_key === g.echo_key); const st = peers.reduce((m, r) => ORDER[String(r.status)] < ORDER[String(m.status)] ? r : m, peers[0]).status as string; const indep = Math.max(...peers.map(r => Number(r.indep_count))); const urls = [...new Set(peers.map(r => String(r.source_url)))].slice(0, 6).map(u => `[${u}]`).join(' '); const rep = peers.reduce((a, b) => String(a.claim).length >= String(b.claim).length ? a : b); sec[st].push(`- ${rep.claim} — indep=${indep} — ${urls}`.replace(/ — $/, '')); }
+	const src_lines = ['## Sources', '', '| title | url |', '|---|---|']; for (const s of sources) src_lines.push(`| ${(s.title || '').replace(/\|/g, '/').slice(0, 48)} | ${s.url} |`);
+	const rej = gated.filter(g => !g.quote_found).length; const bad = gated.filter(g => g.quote_found && (g as { missing_numbers: string[] }).missing_numbers.length).length; const units = new Set(gated.filter(g => g.verified).map(g => String(g.unit)));
+	const body = Object.keys(ORDER).map(st => `## ${TITLES[st]}\n\n` + (sec[st].length ? sec[st].join('\n') : 'None.')).join('\n\n');
+	return `# ${meta.subject}\n\n- Question: ${meta.question || meta.subject}\n- Generated: ${new Date().toISOString().slice(0, 10)}\n- Limits: proves quotation and number containment only; corroboration is byte-identical wording on ≥2 domains.\n\n${body}\n\n## Process audit\n\n- Claims: ${gated.length}; quote rejects: ${rej}; figure rejects: ${bad}\n- Distinct verified domains: ${units.size}\n\n${src_lines.join('\n')}\n`;
 }
 
-// ——— main run ———
-async function run(question: string, slug: string, explicitAngles: string[], enableThink: boolean) {
-	const wd = resolve(ROOT, slug);
-	mkdirSync(wd, { recursive: true });
-	const state_path = resolve(wd, 'state.json');
-	let state: State = existsSync(state_path) ? JSON.parse(readFileSync(state_path, 'utf8')) as State : { question, slug, done: [], phase: 'pre' };
-	state.question = question; state.slug = slug;
-	write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
+// helpers
+function load_jsonl(p: string): Record<string, unknown>[] { if (!existsSync(p)) return []; const t = readFileSync(p, 'utf8'); const out: Record<string, unknown>[] = []; for (const ln of t.split('\n')) if (ln.trim()) try { out.push(JSON.parse(ln)); } catch {} return out; }
+function write_jsonl(p: string, rows: Record<string, unknown>[]) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '')); }
 
-	if (!existsSync(resolve(wd, 'meta.json'))) {
-		await cnd(['init', question, '--slug', slug, '--question', question]);
-	}
+// main
+async function run(question: string, slug: string, explicitAngles: string[]) {
+	const wd = resolve(ROOT, slug); mkdirSync(wd, { recursive: true });
+	const state_path = resolve(wd, 'state.json');
+	let state: State = existsSync(state_path) ? JSON.parse(readFileSync(state_path, 'utf8')) as State : { question, slug, done: [] };
+	state.question = question; state.slug = slug; write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
+	const meta_path = resolve(wd, 'meta.json');
+	if (!existsSync(meta_path)) write_atomic(meta_path, JSON.stringify({ slug, subject: question, question, created: new Date().toISOString(), updated: new Date().toISOString() }, null, '\t'));
+	else { const m = JSON.parse(readFileSync(meta_path, 'utf8')); m.question = question; m.updated = new Date().toISOString(); write_atomic(meta_path, JSON.stringify(m, null, '\t')); }
 
 	console.log(`research: ${slug}`);
-	console.log(`model: ${CFG?.model} reasoning=${CFG?.reasoning || 'off'} think=${enableThink ? 'on' : 'off'}`);
 
-	// PHASE 1: pre-think (optional)
-	let preText = '';
-	if (enableThink) {
-		if (!state.done.includes('phase:pre-think')) {
-			const preAngles = explicitAngles.length ? explicitAngles.slice(0, MAX_PRE_ANGLES) : await genPreAngles(question);
-			preText = await run_thinking_phase(slug, question, 'pre', preAngles, wd, state);
-			state.done.push('phase:pre-think');
-			write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
-		} else {
-			const concFile = resolve(THINK, `${slug}-research-pre.conclusions.md`);
-			preText = existsSync(concFile) ? readFileSync(concFile, 'utf8') : '';
-			console.log(`skip pre-think, ${preText.length} chars cached`);
-		}
-	}
-
-	// Decide search angles
+	// angles: explicit or 1 LLM call for 6 queries or fallback [question]
 	let angles: string[];
-	if (explicitAngles.length) { angles = explicitAngles.slice(0, MAX_ANGLES); console.log(`using explicit ${angles.length} angles`); }
-	else if (enableThink && preText) {
-		if (!state.angles || !state.angles.length) {
-			console.log(`\n=== deriving search queries from pre-thinking ===`);
-			angles = await extract_search_queries(preText, question);
-			console.log(`derived ${angles.length} queries:`); angles.forEach((a, i) => console.log(`  ${i + 1}. ${a}`));
-			state.angles = angles;
-			write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
-		} else { angles = state.angles; console.log(`using cached ${angles.length} queries`); }
-	} else if (state.angles?.length) { angles = state.angles; console.log(`using cached ${angles.length} angles`); }
+	if (explicitAngles.length) { angles = explicitAngles.slice(0, MAX_Q); console.log(`explicit ${angles.length} angles`); }
+	else if (state.angles?.length) { angles = state.angles; console.log(`cached ${angles.length} angles`); }
 	else {
-		// no think: derive directly from question via LLM (1 call) or fallback to question
-		console.log(`\n=== deriving search queries ===`);
-		angles = await extract_search_queries('', question);
-		if (angles.length === 1 && angles[0] === question) {
-			// expand slightly: ask LLM for 5-8 variants
-			const prompt = `Generate up to 8 distinct web search queries covering: "${question}". Return ONLY JSON array.`;
-			try {
-				const raw = await llm(prompt);
-				const m = raw.match(/\[[\s\S]*\]/);
-				if (m) {
-					const arr = JSON.parse(m[0]) as unknown;
-					if (Array.isArray(arr) && arr.length > 1) angles = (arr as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_ANGLES);
-				}
-			} catch {}
-		}
+		angles = [question];
+		try {
+			const raw = await llm(`Generate up to ${MAX_Q} distinct web search queries covering: "${question}". Return ONLY JSON array.`);
+			const m = raw.match(/\[[\s\S]*\]/);
+			if (m) { const a = JSON.parse(m[0]) as unknown; if (Array.isArray(a) && a.length > 1) angles = (a as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_Q); }
+		} catch {}
 		console.log(`queries (${angles.length}):`); angles.forEach((a, i) => console.log(`  ${i + 1}. ${a}`));
-		state.angles = angles;
-		write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
+		state.angles = angles; write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	}
-	angles = angles.slice(0, MAX_ANGLES);
+	angles = angles.slice(0, MAX_Q);
 
-	// PHASE 2: search (parallel, concurrency 5)
+	// search parallel
 	const kept = new Map<string, Hit>();
-	const limit = pLimit(CONCURRENCY);
-	const searchTasks = angles.map((angle, i) => ({ angle, id: `a${String(i + 1).padStart(2, '0')}` }));
-	// run pending searches in parallel
-	await Promise.all(searchTasks.map(({ angle, id }) => limit(async () => {
-		if (state.done.includes('search:' + id)) { log(`skip search ${id}`); return; }
-		console.log(`\n── search ${id} ── ${angle}`);
-		const dest = resolve(wd, `search-${id}.json`);
-		const hits = await search_angle(angle, dest);
-		console.log(`  ${hits.length} hits`);
-		for (const h of hits) if (!kept.has(h.url)) kept.set(h.url, h);
-		state.done.push('search:' + id);
-		write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
+	const lim = pLimit(N);
+	await Promise.all(angles.map((q, i) => lim(async () => {
+		const id = `a${String(i + 1).padStart(2, '0')}`; if (state.done.includes('search:' + id)) return;
+		console.log(`\n── search ${id} ── ${q}`);
+		const dest = resolve(wd, `search-${id}.json`); const hits = await search_angle(q, dest);
+		console.log(`  ${hits.length} hits`); for (const h of hits) if (!kept.has(h.url)) kept.set(h.url, h);
+		state.done.push('search:' + id); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	})));
-	// reconcile all files on disk (covers resumed runs)
-	for (let i = 0; i < angles.length; i++) {
-		const dest = resolve(wd, `search-a${String(i + 1).padStart(2, '0')}.json`);
-		if (existsSync(dest)) for (const h of parse_hits(readFileSync(dest, 'utf8'))) if (!kept.has(h.url)) kept.set(h.url, h);
-	}
-	const urls = [...kept.values()];
-	console.log(`\n${urls.length} unique urls`);
+	for (let i = 0; i < angles.length; i++) { const p = resolve(wd, `search-a${String(i + 1).padStart(2, '0')}.json`); if (existsSync(p)) for (const h of parse_hits(readFileSync(p, 'utf8'))) if (!kept.has(h.url)) kept.set(h.url, h); }
+	const urls = [...kept.values()].slice(0, MAX_PAGES * 2); // search gives ~50, cap later
+	console.log(`\n${urls.length} unique urls (cap ${MAX_PAGES})`);
+	const capped = urls.slice(0, MAX_PAGES);
 
-	// PHASE 3: pages — scrape + extract (parallel, concurrency 5)
-	const pageLimit = pLimit(CONCURRENCY);
-	await Promise.all(urls.map(h => pageLimit(async () => {
-		const pid = pid_of(h.url);
-		if (state.done.includes('page:' + pid)) { log(`skip ${h.url}`); return; }
+	// scrape + extract parallel
+	const plim = pLimit(N);
+	const sources: Array<{ url: string; title: string }> = [];
+	await Promise.all(capped.map(h => plim(async () => {
+		const pid = pid_of(h.url); if (state.done.includes('page:' + pid)) { sources.push({ url: h.url, title: h.title }); return; }
 		console.log(`\n── page ${h.url} ──`);
 		const txt_path = resolve(wd, 'pages', `${pid}.txt`);
 		let text = existsSync(txt_path) ? readFileSync(txt_path, 'utf8') : '';
-		if (!text) {
-			const scraped = await scrape_page(h.url, resolve(wd, `scrape-${pid}.md`));
-			text = scraped || h.excerpt || '';
-			if (text) write_atomic(txt_path, text);
-		}
-		if (!text.trim()) {
-			console.log('  empty, skip');
-			state.done.push('page:' + pid);
-			write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
-			return;
-		}
-		await cnd(['add-source', slug, '--url', h.url, '--title', h.title, '--file', txt_path]);
+		if (!text) { const s = await scrape_page(h.url, resolve(wd, `scrape-${pid}.md`)); text = s || h.excerpt || ''; if (text) write_atomic(txt_path, text); }
+		if (!text.trim()) { console.log('  empty'); state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n'); return; }
+		sources.push({ url: h.url, title: h.title });
 		console.log('  → extract');
 		const raw = await llm(extract_prompt(h.url, text));
 		const claims = parse_extract(raw, h.url);
-		const ext = resolve(wd, 'extracts', `${pid}.json`);
-		write_atomic(ext, JSON.stringify({ source_url: h.url, claims }, null, '\t') + '\n');
+		const ext = resolve(wd, 'extracts', `${pid}.json`); write_atomic(ext, JSON.stringify({ source_url: h.url, claims }, null, '\t') + '\n');
 		console.log(`  ← ${claims.length} claims`);
-		state.done.push('page:' + pid);
-		write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
+		state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	})));
+	// reload sources from disk for ledger (covers resume)
+	const srcSet = new Map<string, { url: string; title: string }>();
+	for (const h of capped) srcSet.set(h.url, { url: h.url, title: h.title });
+	if (existsSync(resolve(wd, 'pages'))) { for (const f of readdirSync(resolve(wd, 'pages'))) if (f.endsWith('.meta.json')) try { const m = JSON.parse(readFileSync(resolve(wd, 'pages', f), 'utf8')); if (m.url) srcSet.set(m.url, { url: m.url, title: m.title || '' }); } catch {} }
+	const allSources = [...srcSet.values()];
 
-	const extracts = urls.map(h => resolve(wd, 'extracts', `${pid_of(h.url)}.json`)).filter(existsSync);
-	if (!extracts.length) die('incomplete — no extracts');
-	await cnd(['ingest-extract', slug, ...extracts]);
-	await cnd(['gate', slug]);
-
-	// PHASE 4: post-think → synthesis.md (separate, unverified) — only if --think
-	if (enableThink) {
-		if (!state.done.includes('phase:post-think')) {
-			let excerpt = '';
-			try { excerpt = extracts.slice(0, 3).map(f => readFileSync(f, 'utf8').slice(0, 2000)).join('\n').slice(0, 8000); } catch {}
-			const postAngles = await genPostAngles(question, excerpt);
-			await run_thinking_phase(slug, question, 'post', postAngles, wd, state);
-			state.done.push('phase:post-think');
-			write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
-		}
-		const postConc = resolve(THINK, `${slug}-research-post.conclusions.md`);
-		if (existsSync(postConc)) {
-			const synth = readFileSync(postConc, 'utf8').replace(/^<!-- done: .+ -->\n/gm, '').slice(0, 12000);
-			const out = resolve(wd, 'synthesis.md');
-			const banner = `> ⚠️ UNVERIFIED synthesis — not quote-gated. Read the ledger for audited claims.\n\n`;
-			write_atomic(out, `# ${slug} synthesis (unverified)\n\n${banner}${synth}\n`);
-			console.log(`synthesis → ${out} (UNVERIFIED, not appended to ledger)`);
-		}
+	const extracts = capped.map(h => resolve(wd, 'extracts', `${pid_of(h.url)}.json`)).filter(existsSync);
+	if (!extracts.length) die('no extracts');
+	// ingest -> gate inline
+	const raw_path = resolve(wd, 'claims.raw.jsonl'); const existing = load_jsonl(raw_path);
+	let n_new = 0;
+	for (const p of extracts) {
+		const d = JSON.parse(readFileSync(p, 'utf8')) as { claims?: unknown[]; source_url?: string };
+		const cs = Array.isArray(d.claims) ? d.claims as Record<string, unknown>[] : [];
+		// avoid double ingest: check if already in existing by source
+		if (existing.some(r => r.source_url === d.source_url)) continue;
+		for (let i = 0; i < cs.length; i++) { const c = cs[i] as Record<string, unknown>; if (!c.source_url) c.source_url = d.source_url; if (!c.id) c.id = `${pid_of(String(c.source_url))}_${i}`; existing.push(c); n_new++; }
 	}
+	write_jsonl(raw_path, existing);
+	console.log(`ingested ${n_new} new claims (${existing.length} total)`);
 
-	await cnd(['write', slug, '--question', question]);
-	const pub = resolve(ROOT, slug + '.md');
-	if (!existsSync(pub)) die('incomplete — no ledger');
-	console.log(`\nwrite → ${pub}`);
-	if (enableThink && existsSync(resolve(wd, 'synthesis.md'))) console.log(`synthesis → ${resolve(wd, 'synthesis.md')}`);
-	console.log('0 — done');
+	// gate
+	const cache: Record<string, string> = {};
+	function text_for(url: string) { const k = normalize_url(url); if (k in cache) return cache[k]; const p = resolve(wd, 'pages', `${pid_of(url)}.txt`); const t = existsSync(p) ? readFileSync(p, 'utf8') : ''; cache[k] = t; return t; }
+	const gated = assign_status(existing.map(c => gate_claim(c as Record<string, unknown>, text_for(String(c.source_url || '')))));
+	write_jsonl(resolve(wd, 'claims.gated.jsonl'), gated);
+	console.log(`gated ${gated.length} verified=${gated.filter(g => g.verified).length}`);
+
+	// write ledger
+	const meta = JSON.parse(readFileSync(meta_path, 'utf8'));
+	const md = render_ledger(meta, gated, allSources);
+	const out = resolve(ROOT, `${slug}.md`); write_atomic(out, md);
+	console.log(`\nwrite → ${out}\n0 — done`);
 }
 
 async function main() {
 	const args = process.argv.slice(2);
 	if (!args.length || args.includes('-h') || args.includes('--help')) {
-		console.log(`research "<question>" [--think] [--model provider/id] [--reasoning high] [--angle "q"] [--slug s] [--resume slug] [--verbose] [--quiet]\n  --think     enable pre/post thinking + synthesis.md (costly, gated ledger unchanged)\n  --resume s  resume existing slug\n  --slug s    force slug for new question`);
+		console.log(`research "<question>" [--angle q] [--slug s] [--resume s] [--model p/id] [--reasoning high] [--verbose]\n  --angle can repeat; --resume resumes slug; --slug forces slug`);
 		process.exit(0);
 	}
-	const angles: string[] = [];
-	let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash';
-	let reasoning = process.env.RESEARCH_REASONING || '';
-	let explicitSlug: string | null = null;
-	let resumeSlug: string | null = null;
-	let enableThink = false;
-	const rest: string[] = [];
+	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash'; let reasoning = process.env.RESEARCH_REASONING || '';
+	let explicitSlug: string | null = null; let resumeSlug: string | null = null; const rest: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === '--angle') { const v = args[++i]; if (!v) die('--angle needs text'); angles.push(v); }
-		else if (a === '--model') { spec = args[++i] || die('--model needs provider/id'); }
-		else if (a === '--reasoning') { reasoning = args[++i] || die('--reasoning needs a level'); }
-		else if (a === '--think') { enableThink = true; }
-		else if (a === '--slug') { explicitSlug = args[++i] || die('--slug needs value'); }
-		else if (a === '--resume') { resumeSlug = args[++i] || die('--resume needs slug'); }
-		else if (a === '--verbose' || a === '--quiet' || a === '--no-verbose') { /* handled via env/VERBOSE */ }
-		else if (a === '--fast') { /* ignored, compat */ }
-		else if (a.startsWith('--')) { die(`unknown flag ${a}`); }
+		else if (a === '--model') spec = args[++i] || die('--model needs p/id');
+		else if (a === '--reasoning') reasoning = args[++i] || die('--reasoning needs value');
+		else if (a === '--slug') explicitSlug = args[++i] || die('--slug needs value');
+		else if (a === '--resume') resumeSlug = args[++i] || die('--resume needs slug');
+		else if (a === '--verbose' || a === '--quiet') { /* flag handled */ }
+		else if (a === '--think' || a === '--fast' || a === '--no-verbose') { console.error(`note: ${a} removed (minimal)`); }
+		else if (a.startsWith('--')) die(`unknown flag ${a}`);
 		else rest.push(a);
 	}
 	CFG = make_cfg(spec, reasoning);
-
-	// resume mode: explicit --resume takes precedence, else bare slug compat
 	if (resumeSlug) {
-		const wd = resolve(ROOT, resumeSlug);
-		if (!existsSync(resolve(wd, 'state.json')) && !existsSync(resolve(wd, 'meta.json'))) die(`no workspace for --resume ${resumeSlug}`);
+		const wd = resolve(ROOT, resumeSlug); if (!existsSync(resolve(wd, 'state.json')) && !existsSync(resolve(wd, 'meta.json'))) die(`no workspace for --resume ${resumeSlug}`);
 		const st = JSON.parse(readFileSync(resolve(wd, 'state.json'), 'utf8')) as State;
-		const q = st.question || resumeSlug;
-		const saved: string[] = st.angles || [];
-		if (!angles.length && saved.length) angles.push(...saved);
-		await run(q, resumeSlug, angles, enableThink || (st.done.includes('phase:pre-think') || st.done.includes('phase:post-think')));
-		return;
+		const q = st.question || resumeSlug; if (!angles.length && st.angles?.length) angles.push(...st.angles);
+		await run(q, resumeSlug, angles); return;
 	}
-
 	const first = rest[0] || die('need <question> or --resume <slug>');
-	// bare slug compat: if first arg is an existing slug and no other rest, treat as resume with warning
-	const maybeSlugWd = resolve(ROOT, first);
-	const isExistingSlug = rest.length === 1 && (existsSync(resolve(maybeSlugWd, 'state.json')) || existsSync(resolve(maybeSlugWd, 'meta.json')));
-	if (isExistingSlug && !explicitSlug) {
-		console.error(`note: "${first}" looks like an existing slug — resuming. Use --resume for explicit resume.`);
-		const st = JSON.parse(readFileSync(resolve(maybeSlugWd, 'state.json'), 'utf8')) as State;
-		const q = st.question || first;
-		const saved: string[] = st.angles || [];
-		if (!angles.length && saved.length) angles.push(...saved);
-		await run(q, first, angles, enableThink || (st.done.includes('phase:pre-think') || st.done.includes('phase:post-think')));
-		return;
+	const maybeWd = resolve(ROOT, first);
+	if (rest.length === 1 && !explicitSlug && (existsSync(resolve(maybeWd, 'state.json')) || existsSync(resolve(maybeWd, 'meta.json')))) {
+		console.error(`note: "${first}" looks like slug — resuming. Use --resume for explicit.`);
+		const st = JSON.parse(readFileSync(resolve(maybeWd, 'state.json'), 'utf8')) as State;
+		const q = st.question || first; if (!angles.length && st.angles?.length) angles.push(...st.angles);
+		await run(q, first, angles); return;
 	}
-
 	const question = rest.join(' ').trim() || first;
 	const slug = explicitSlug || slugify(question);
-	await run(question, slug, angles, enableThink);
+	await run(question, slug, angles);
 }
-
 main().catch(e => { console.error((e as Error).stack || (e as Error).message); process.exit(1); });
