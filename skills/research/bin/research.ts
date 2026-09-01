@@ -8,7 +8,20 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, readdir
 import { homedir } from 'node:os';
 import { dirname, resolve, basename } from 'node:path';
 
-type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses' };
+type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses'; reasoning?: string };
+
+const PROVIDERS: Record<string, { baseUrl: () => string; apiKey: () => string }> = {
+	'amazon-bedrock-mantle': {
+		baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''),
+		apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '',
+	},
+	openrouter: {
+		baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
+		apiKey: () => process.env.OPENROUTER_API_KEY || '',
+	},
+};
+
+let CFG: Cfg | null = null;
 type Hit = { url: string; title: string; excerpt: string };
 type Claim = { claim: string; quote: string; cited_primary: string | null; source_url: string };
 
@@ -86,26 +99,27 @@ vlog('env', `env snapshot`, {
 	THINK_will_be: resolve(homedir(), 'think'),
 });
 
-const OPENROUTER = process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1';
-const GLM = 'z-ai/glm-5.3-flash';
 const ROOT = resolve(homedir(), 'search');
 const THINK = resolve(homedir(), 'think');
 const CND_TS = resolve(homedir(), '.agents/skills/condense-search/cnd.ts');
 const CND_PY = resolve(homedir(), '.agents/skills/condense-search/cnd.py');
 const CND = existsSync(CND_TS) ? CND_TS : CND_PY;
-vlog('cfg', `constants resolved`, { OPENROUTER, GLM, ROOT, THINK, CND });
+vlog('cfg', `constants resolved`, { ROOT, THINK, CND });
 
 function slugify(s: string): string { const r = (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'topic').slice(0, 64); vlog('slugify', `input=${trunc(s,80)} → slug=${r}`); return r; }
-function openrouter_key(): string {
-	vlog('openrouter_key', `resolving openrouter key`, { has_env: !!process.env.OPENROUTER_API_KEY, env_len: (process.env.OPENROUTER_API_KEY||'').length });
-	return process.env.OPENROUTER_API_KEY || '';
+function parse_model(raw: string): { provider: string; model: string } {
+	const i = raw.indexOf('/');
+	if (i < 1) die('model must be provider/id, e.g. amazon-bedrock-mantle/xai.grok-4.6');
+	return { provider: raw.slice(0, i), model: raw.slice(i + 1) };
 }
-function glm_cfg(): Cfg | null {
-	vlog('glm_cfg', `building glm cfg`, { has_openrouter_key: !!openrouter_key() });
-	const apiKey = openrouter_key();
-	if (!apiKey) { vlog('glm_cfg', `no openrouter key, returning null`); return null; }
-	const cfg = { baseUrl: OPENROUTER.replace(/\/+$/, ''), apiKey, model: GLM, timeout: 120000, max_tokens: 8000, api: 'chat' as const };
-	vlog('glm_cfg', `cfg built`, { baseUrl: cfg.baseUrl, model: cfg.model, timeout: cfg.timeout, max_tokens: cfg.max_tokens, api: cfg.api, key_len: apiKey.length });
+function make_cfg(spec: string, reasoning: string): Cfg {
+	const { provider, model } = parse_model(spec);
+	const p = PROVIDERS[provider];
+	if (!p) die(`unknown provider ${provider}. known: ${Object.keys(PROVIDERS).join(', ')}`);
+	const apiKey = p.apiKey();
+	if (!apiKey) die(`no api key for ${provider}`);
+	const cfg: Cfg = { baseUrl: p.baseUrl(), apiKey, model, timeout: 300000, max_tokens: 8000, api: 'chat', reasoning: reasoning || undefined };
+	vlog('make_cfg', `cfg built`, { provider, model: cfg.model, baseUrl: cfg.baseUrl, reasoning: cfg.reasoning || 'off', key_len: apiKey.length });
 	return cfg;
 }
 function sh(cmd: string, args: string[], timeout = 90000): { ok: boolean; out: string; err: string } {
@@ -171,7 +185,8 @@ function text_of(cfg: Cfg, json: any): string {
 }
 async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promise<string> {
 	const url = cfg.baseUrl + (cfg.api === 'responses' ? '/responses' : '/chat/completions');
-	const body = cfg.api === 'responses' ? { model: cfg.model, input: prompt, max_output_tokens: cfg.max_tokens, usage: { include: true } } : { model: cfg.model, messages: [{ role: 'user', content: prompt }], max_tokens: cfg.max_tokens, temperature: isChat ? 0.7 : 0.2, usage: { include: true } };
+	const body: any = cfg.api === 'responses' ? { model: cfg.model, input: prompt, max_output_tokens: cfg.max_tokens } : { model: cfg.model, messages: [{ role: 'user', content: prompt }], max_tokens: cfg.max_tokens, temperature: isChat ? 0.7 : 0.2 };
+	if (cfg.reasoning) body.reasoning = { effort: cfg.reasoning };
 	vlog('fetch_with_cfg:start', `LLM call start`, {
 		url, model: cfg.model, api: cfg.api, isChat,
 		prompt_chars: prompt.length, prompt_preview: trunc(prompt, 500),
@@ -233,11 +248,10 @@ async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promis
 	throw new Error(last);
 }
 async function llm_chain(prompt: string, isChat: boolean, where: string): Promise<string> {
-	const cfg = glm_cfg();
-	if (!cfg) die('no OPENROUTER_API_KEY');
-	vlog('llm_chain:start', `glm only`, { where, isChat, model: cfg.model });
-	const out = await fetch_with_cfg(cfg, prompt, isChat);
-	vlog('llm_chain:success', `model succeeded`, { model: cfg.model, out_len: out.length });
+	if (!CFG) die('no model cfg');
+	vlog('llm_chain:start', `llm`, { where, isChat, model: CFG.model, reasoning: CFG.reasoning || 'off' });
+	const out = await fetch_with_cfg(CFG, prompt, isChat);
+	vlog('llm_chain:success', `model succeeded`, { model: CFG.model, out_len: out.length });
 	return out;
 }
 async function llm(prompt: string): Promise<string> {
@@ -631,8 +645,8 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 	}
 
 	console.log(`research: ${slug}`);
-	vlog('run:model', `model`, { model: GLM });
-	console.log(`model: ${GLM}`);
+	vlog('run:model', `model`, { model: CFG?.model, reasoning: CFG?.reasoning || 'off' });
+	console.log(`model: ${CFG?.model} reasoning=${CFG?.reasoning || 'off'}`);
 
 	// PHASE 1: dynamic thinking pre (model decides count)
 	let preText = '';
@@ -780,10 +794,13 @@ async function main(){
 	const t0 = Date.now();
 	vlog('main:start', `main entered`, { args: process.argv.slice(2), argc: process.argv.length });
 	const args=process.argv.slice(2);
-	if(!args.length||args.includes('-h')||args.includes('--help')){ console.log(`research "<question>" [--angle "s"]...\nresearch <slug>`); process.exit(0); }
+	if(!args.length||args.includes('-h')||args.includes('--help')){ console.log(`research "<question>" [--model provider/id] [--reasoning high] [--angle "s"]...\nresearch <slug>`); process.exit(0); }
 	const angles:string[]=[]; const rest:string[]=[];
+	let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash';
+	let reasoning = process.env.RESEARCH_REASONING || '';
 	vlog('main:parse_args', `parsing args`, { raw: args });
-	for(let i=0;i<args.length;i++){ const a=args[i]; if(a==='--angle') { const val = args[++i]||die('--angle needs text'); angles.push(val); vlog('main:angle', `angle added`, { val: trunc(val,200), total: angles.length }); } else if(a==='--fast') { vlog('main:fast_ignored', `--fast ignored`); continue; } else if(a==='--verbose') { vlog('main:verbose_flag', `--verbose explicit`); continue; } else if(a==='--quiet' || a==='--no-verbose') { vlog('main:quiet_flag', `${a} explicit`); continue; } else rest.push(a); }
+	for(let i=0;i<args.length;i++){ const a=args[i]; if(a==='--angle') { const val = args[++i]||die('--angle needs text'); angles.push(val); vlog('main:angle', `angle added`, { val: trunc(val,200), total: angles.length }); } else if(a==='--model') { spec = args[++i]||die('--model needs provider/id'); } else if(a==='--reasoning') { reasoning = args[++i]||die('--reasoning needs a level'); } else if(a==='--fast') { vlog('main:fast_ignored', `--fast ignored`); continue; } else if(a==='--verbose') { vlog('main:verbose_flag', `--verbose explicit`); continue; } else if(a==='--quiet' || a==='--no-verbose') { vlog('main:quiet_flag', `${a} explicit`); continue; } else rest.push(a); }
+	CFG = make_cfg(spec, reasoning);
 	vlog('main:parsed', `parsed`, { angles: angles.length, rest, rest_preview: rest.slice(0,3).map(s=>trunc(s,100)) });
 	const first=rest[0]||die('need <question>');
 	const maybe_n=rest[1]&&/^\d+$/.test(rest[1])?parseInt(rest[1],10):0;

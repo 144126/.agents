@@ -3,11 +3,12 @@ name: research
 description: Quote-audited dynamic thinking (model decides count) + search.
 ---
 
-Uses z-ai/glm-5.3-flash via OpenRouter (OPENROUTER_API_KEY). Prints each response usage JSON, then a run total.
+OpenAI-compatible chat. Default `openrouter/z-ai/glm-5.3-flash`. Pass `--model provider/id` and `--reasoning high` to swap.
 
 ```bash
 # ask
 ~/.agents/skills/research/bin/research.ts "<question>"
+~/.agents/skills/research/bin/research.ts "<question>" --model amazon-bedrock-mantle/xai.grok-4.6 --reasoning high
 # resume
 ~/.agents/skills/research/bin/research.ts "<slug>"
 # angled

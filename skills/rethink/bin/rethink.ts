@@ -7,7 +7,20 @@ import { homedir } from 'node:os';
 
 type Node = { s: string; d?: 0 | 1; c?: Record<string, Node> };
 type Tree = Record<string, Node>;
-type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses' };
+type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; api: 'chat' | 'responses'; reasoning?: string };
+
+const PROVIDERS: Record<string, { baseUrl: () => string; apiKey: () => string }> = {
+	'amazon-bedrock-mantle': {
+		baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''),
+		apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '',
+	},
+	openrouter: {
+		baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''),
+		apiKey: () => process.env.OPENROUTER_API_KEY || '',
+	},
+};
+
+let CFG: Cfg | null = null;
 
 const usages: any[] = [];
 
@@ -47,8 +60,6 @@ const die = (m: string): never => {
 	process.exit(1);
 };
 
-const OPENROUTER = process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1';
-const GLM = 'z-ai/glm-5.3-flash';
 const THINK = resolve(homedir(), 'think');
 
 function slug(s: string): string {
@@ -56,10 +67,19 @@ function slug(s: string): string {
 	return t || 'topic';
 }
 
-function glm_cfg(): Cfg | null {
-	const apiKey = process.env.OPENROUTER_API_KEY || '';
-	if (!apiKey) return null;
-	return { baseUrl: OPENROUTER.replace(/\/+$/, ''), apiKey, model: GLM, timeout: 300000, max_tokens: 4096, api: 'chat' as const };
+function parse_model(raw: string): { provider: string; model: string } {
+	const i = raw.indexOf('/');
+	if (i < 1) die('model must be provider/id, e.g. amazon-bedrock-mantle/xai.grok-4.6');
+	return { provider: raw.slice(0, i), model: raw.slice(i + 1) };
+}
+
+function make_cfg(spec: string, reasoning: string): Cfg {
+	const { provider, model } = parse_model(spec);
+	const p = PROVIDERS[provider];
+	if (!p) die(`unknown provider ${provider}. known: ${Object.keys(PROVIDERS).join(', ')}`);
+	const apiKey = p.apiKey();
+	if (!apiKey) die(`no api key for ${provider}`);
+	return { baseUrl: p.baseUrl(), apiKey, model, timeout: 300000, max_tokens: 8192, api: 'chat', reasoning: reasoning || undefined };
 }
 
 function leaves(t: Tree, prefix: string[] = []): { path: string[]; node: Node }[] {
@@ -170,10 +190,11 @@ function text_of(cfg: Cfg, json: any): string {
 
 async function fetch_with_cfg(cfg: Cfg, messages: { role: string; content: string }[]): Promise<string> {
 	const url = cfg.baseUrl + (cfg.api === 'responses' ? '/responses' : '/chat/completions');
-	const body =
+	const body: any =
 		cfg.api === 'responses'
-			? { model: cfg.model, input: messages.map((m) => m.content).join('\n\n'), max_output_tokens: cfg.max_tokens, usage: { include: true } }
-			: { model: cfg.model, messages, max_tokens: cfg.max_tokens, temperature: 0.7, usage: { include: true } };
+			? { model: cfg.model, input: messages.map((m) => m.content).join('\n\n'), max_output_tokens: cfg.max_tokens }
+			: { model: cfg.model, messages, max_tokens: cfg.max_tokens, temperature: 0.7 };
+	if (cfg.reasoning) body.reasoning = { effort: cfg.reasoning };
 	let last = '';
 	for (let i = 1; i <= 3; i++) {
 		const ac = new AbortController();
@@ -210,9 +231,8 @@ async function fetch_with_cfg(cfg: Cfg, messages: { role: string; content: strin
 }
 
 async function post(messages: { role: string; content: string }[]): Promise<string> {
-	const cfg = glm_cfg();
-	if (!cfg) die('no OPENROUTER_API_KEY');
-	return await fetch_with_cfg(cfg, messages);
+	if (!CFG) die('no model cfg');
+	return await fetch_with_cfg(CFG, messages);
 }
 
 function think_prompt(preamble: string | null, leaf_s: string): string {
@@ -245,7 +265,7 @@ function write_tree(file: string, preamble: string, tree: Tree) {
 
 async function run(file: string) {
 	console.log(`rethink: ${file}`);
-	console.log(`model: ${GLM}`);
+	console.log(`model: ${CFG?.model} reasoning=${CFG?.reasoning || 'off'}`);
 
 	const conc = file.replace(/\.r$/, '') + '.conclusions.md';
 	let n = 0;
@@ -308,20 +328,24 @@ async function run(file: string) {
 async function main() {
 	const args = process.argv.slice(2);
 	if (!args.length || args.includes('-h') || args.includes('--help')) {
-		console.log(`rethink <topic> <n> [--fast] [--angle "s"]...
-rethink <file.r> [--fast]`);
+		console.log(`rethink <topic> <n> [--model provider/id] [--reasoning high] [--angle "s"]...
+rethink <file.r> [--model provider/id] [--reasoning high]`);
 		process.exit(0);
 	}
 
 	const angles: string[] = [];
 	const rest: string[] = [];
-	let fast = false;
+	let spec = process.env.RETHINK_MODEL || 'openrouter/z-ai/glm-5.3-flash';
+	let reasoning = process.env.RETHINK_REASONING || '';
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
-		if (a === '--fast') fast = true;
+		if (a === '--fast') continue;
+		else if (a === '--model') spec = args[++i] || die('--model needs provider/id');
+		else if (a === '--reasoning') reasoning = args[++i] || die('--reasoning needs a level');
 		else if (a === '--angle') angles.push(args[++i] || die('--angle needs text'));
 		else rest.push(a);
 	}
+	CFG = make_cfg(spec, reasoning);
 
 	const first = rest[0];
 	if (!first) die('need <topic> <n> or <file.r>');
