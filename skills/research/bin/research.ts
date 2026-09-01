@@ -118,7 +118,7 @@ function make_cfg(spec: string, reasoning: string): Cfg {
 	if (!p) die(`unknown provider ${provider}. known: ${Object.keys(PROVIDERS).join(', ')}`);
 	const apiKey = p.apiKey();
 	if (!apiKey) die(`no api key for ${provider}`);
-	const cfg: Cfg = { baseUrl: p.baseUrl(), apiKey, model, timeout: 300000, max_tokens: 8000, api: 'chat', reasoning: reasoning || undefined };
+	const cfg: Cfg = { baseUrl: p.baseUrl(), apiKey, model, timeout: 600000, max_tokens: 8000, api: 'chat', reasoning: reasoning || undefined };
 	vlog('make_cfg', `cfg built`, { provider, model: cfg.model, baseUrl: cfg.baseUrl, reasoning: cfg.reasoning || 'off', key_len: apiKey.length });
 	return cfg;
 }
@@ -194,7 +194,7 @@ async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promis
 		timeout_ms: cfg.timeout, max_tokens: cfg.max_tokens,
 	});
 	let last = '';
-	for (let i = 1; i <= 1; i++) {
+	for (let i = 1; i <= 3; i++) {
 		const attempt_t0 = Date.now();
 		vlog('fetch_with_cfg:attempt', `attempt ${i}/3`, { url, model: cfg.model, prompt_len: prompt.length, body_bytes: JSON.stringify(body).length });
 		const ac = new AbortController();
@@ -218,7 +218,7 @@ async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promis
 			if (!res.ok) {
 				last = text.slice(0, 500);
 				vlog('fetch_with_cfg:http_error', `non-ok status attempt ${i}`, { status: res.status, body_preview: trunc(last, 400) });
-				if (i < 1 && (res.status === 429 || res.status >= 500)) {
+				if (i < 3 && (res.status === 429 || res.status >= 500)) {
 					const wait = i*2000;
 					vlog('fetch_with_cfg:retry', `retryable status, waiting ${wait}ms`, { status: res.status });
 					await new Promise(r => setTimeout(r, wait));
@@ -234,12 +234,12 @@ async function fetch_with_cfg(cfg: Cfg, prompt: string, isChat: boolean): Promis
 		} catch (e: any) {
 			last = e.message || String(e);
 			vlog('fetch_with_cfg:catch', `attempt ${i} failed`, { err: last, stack: trunc(e.stack||'', 600), duration_ms: Date.now()-attempt_t0 });
-			if (i < 1) {
+			if (i < 3) {
 				const wait = i*2000;
 				vlog('fetch_with_cfg:retry_wait', `waiting ${wait}ms before next attempt`, { next_attempt: i+1 });
 				await new Promise(r => setTimeout(r, wait));
 			} else {
-				vlog('fetch_with_cfg:exhausted', `all 1 attempts failed`, { last_err: last });
+				vlog('fetch_with_cfg:exhausted', `all 3 attempts failed`, { last_err: last });
 				throw new Error(last);
 			}
 		}
