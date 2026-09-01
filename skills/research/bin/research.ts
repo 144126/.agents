@@ -1,35 +1,29 @@
 #!/usr/bin/env bun
-// research "<question>" [--angle q] [--slug s] [--resume s] [--verbose] [--model p/id]
-// search -> scrape -> extract -> gate -> ledger. No thinking. 1 LLM for queries + 1 per page.
+// search -> scrape -> extract -> gate -> ~/search/<slug>.md
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
-type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number; reasoning?: string };
+type Cfg = { baseUrl: string; apiKey: string; model: string; timeout: number; max_tokens: number };
 type Hit = { url: string; title: string; excerpt: string };
 type State = { question: string; slug: string; done: string[]; angles?: string[] };
 
 const PROVIDERS: Record<string, { baseUrl: () => string; apiKey: () => string }> = {
+	'openrouter': { baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''), apiKey: () => process.env.OPENROUTER_API_KEY || '' },
 	'amazon-bedrock-mantle': { baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''), apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '' },
-	openrouter: { baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''), apiKey: () => process.env.OPENROUTER_API_KEY || '' },
 };
 let CFG: Cfg | null = null;
 const ROOT = resolve(homedir(), 'search');
-const VERBOSE = process.argv.includes('--verbose') || process.env.RESEARCH_VERBOSE === '1';
-const N = 5; // concurrency
-const MAX_Q = 6; // max search queries
-const MAX_PAGES = 10;
+const N = 5, MAX_Q = 6, MAX_PAGES = 10;
 
 const die = (m: string): never => { console.error(m); process.exit(1); };
-const log = (m: string) => { if (VERBOSE) console.error(m); };
 const slugify = (s: string) => (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'topic').slice(0, 64);
 const sha1 = (s: string) => createHash('sha1').update(s).digest('hex');
 const pid_of = (url: string) => sha1(url.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '')).slice(0, 16);
 const write_atomic = (p: string, t: string) => { mkdirSync(dirname(p), { recursive: true }); const tmp = p + '.tmp'; writeFileSync(tmp, t); renameSync(tmp, p); };
 
-// async spawn
 function sh(cmd: string, args: string[], ms = 90000): Promise<{ ok: boolean; out: string; err: string }> {
 	return new Promise(res => {
 		const c = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -49,23 +43,21 @@ function pLimit(n: number) {
 	};
 }
 
-// LLM — chat only
 function parse_model(raw: string) { const i = raw.indexOf('/'); if (i < 1) die('model must be provider/id'); return { provider: raw.slice(0, i), model: raw.slice(i + 1) }; }
-function make_cfg(spec: string, reasoning: string): Cfg {
+function make_cfg(spec: string): Cfg {
 	const { provider, model } = parse_model(spec);
 	const p = PROVIDERS[provider]; if (!p) die(`unknown provider ${provider}`);
 	const k = p.apiKey(); if (!k) die(`no api key for ${provider}`);
-	return { baseUrl: p.baseUrl(), apiKey: k, model, timeout: 600000, max_tokens: 6000, reasoning: reasoning || undefined };
+	return { baseUrl: p.baseUrl(), apiKey: k, model, timeout: 600000, max_tokens: 6000 };
 }
 async function llm(prompt: string): Promise<string> {
 	if (!CFG) die('no cfg');
 	const url = CFG.baseUrl + '/chat/completions';
-	const body: Record<string, unknown> = { model: CFG.model, messages: [{ role: 'user', content: prompt }], max_tokens: CFG.max_tokens, temperature: 0.2 };
-	if (CFG.reasoning) (body as Record<string, unknown>).reasoning = { effort: CFG.reasoning };
+	const body = { model: CFG.model, messages: [{ role: 'user', content: prompt }], max_tokens: CFG.max_tokens, temperature: 0.2 };
 	for (let i = 1; i <= 3; i++) {
 		const ac = new AbortController(); const t = setTimeout(() => ac.abort(), CFG!.timeout);
 		try {
-			const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${CFG.apiKey}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://pi.dev', 'X-OpenRouter-Title': 'pi' }, body: JSON.stringify(body), signal: ac.signal });
+			const r = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${CFG.apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal });
 			const txt = await r.text(); let j: unknown = null; try { j = JSON.parse(txt); } catch {}
 			if (!r.ok) { if (i < 3 && (r.status === 429 || r.status >= 500)) { await new Promise(r => setTimeout(r, i * 2000)); continue; } throw new Error(txt.slice(0, 800)); }
 			const ch = (j as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
@@ -77,7 +69,6 @@ async function llm(prompt: string): Promise<string> {
 	throw new Error('unreachable');
 }
 
-// search / scrape
 function parse_hits(raw: string): Hit[] {
 	let d: unknown; try { d = JSON.parse(raw); } catch { return []; }
 	const o = d as Record<string, unknown>;
@@ -102,7 +93,6 @@ async function scrape_page(url: string, dest: string): Promise<string> {
 	return readFileSync(dest, 'utf8');
 }
 
-// extract
 function extract_prompt(url: string, page: string): string {
 	return `Extract quote-anchored claims from this ONE page. Invent nothing.\nReturn ONLY JSON: {"source_url":"${url}","claims":[{"claim":"atomic sentence","quote":"verbatim ≤40 words","cited_primary":null}]}\nRules: quote verbatim; every number/date in claim must be in quote; one number per claim; empty array valid.\n\nPAGE:\n${page.slice(0, 24000)}`;
 }
@@ -115,7 +105,6 @@ function parse_extract(raw: string, url: string) {
 	} catch { return []; }
 }
 
-// gate — inline from cnd.ts (minimal)
 const NUM_RE = /\d[\d,]*(?:\.\d+)?\s?(?:%|x|×)?/g;
 function norm_ws(s: string) { return (s || '').replace(/\s+/g, ' ').trim(); }
 function norm_key(s: string) { return norm_ws(s).toLowerCase().replace(/[^a-z0-9]+/g, ''); }
@@ -152,11 +141,9 @@ function render_ledger(meta: { slug: string; subject: string; question: string }
 	return `# ${meta.subject}\n\n- Question: ${meta.question || meta.subject}\n- Generated: ${new Date().toISOString().slice(0, 10)}\n- Limits: proves quotation and number containment only; corroboration is byte-identical wording on ≥2 domains.\n\n${body}\n\n## Process audit\n\n- Claims: ${gated.length}; quote rejects: ${rej}; figure rejects: ${bad}\n- Distinct verified domains: ${units.size}\n\n${src_lines.join('\n')}\n`;
 }
 
-// helpers
 function load_jsonl(p: string): Record<string, unknown>[] { if (!existsSync(p)) return []; const t = readFileSync(p, 'utf8'); const out: Record<string, unknown>[] = []; for (const ln of t.split('\n')) if (ln.trim()) try { out.push(JSON.parse(ln)); } catch {} return out; }
 function write_jsonl(p: string, rows: Record<string, unknown>[]) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '')); }
 
-// main
 async function run(question: string, slug: string, explicitAngles: string[]) {
 	const wd = resolve(ROOT, slug); mkdirSync(wd, { recursive: true });
 	const state_path = resolve(wd, 'state.json');
@@ -168,10 +155,9 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 
 	console.log(`research: ${slug}`);
 
-	// angles: explicit or 1 LLM call for 6 queries or fallback [question]
 	let angles: string[];
-	if (explicitAngles.length) { angles = explicitAngles.slice(0, MAX_Q); console.log(`explicit ${angles.length} angles`); }
-	else if (state.angles?.length) { angles = state.angles; console.log(`cached ${angles.length} angles`); }
+	if (explicitAngles.length) { angles = explicitAngles.slice(0, MAX_Q); }
+	else if (state.angles?.length) { angles = state.angles; }
 	else {
 		angles = [question];
 		try {
@@ -179,100 +165,80 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 			const m = raw.match(/\[[\s\S]*\]/);
 			if (m) { const a = JSON.parse(m[0]) as unknown; if (Array.isArray(a) && a.length > 1) angles = (a as unknown[]).map(s => String(s).trim()).filter(Boolean).slice(0, MAX_Q); }
 		} catch {}
-		console.log(`queries (${angles.length}):`); angles.forEach((a, i) => console.log(`  ${i + 1}. ${a}`));
 		state.angles = angles; write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	}
 	angles = angles.slice(0, MAX_Q);
 
-	// search parallel
 	const kept = new Map<string, Hit>();
 	const lim = pLimit(N);
 	await Promise.all(angles.map((q, i) => lim(async () => {
 		const id = `a${String(i + 1).padStart(2, '0')}`; if (state.done.includes('search:' + id)) return;
-		console.log(`\n── search ${id} ── ${q}`);
 		const dest = resolve(wd, `search-${id}.json`); const hits = await search_angle(q, dest);
-		console.log(`  ${hits.length} hits`); for (const h of hits) if (!kept.has(h.url)) kept.set(h.url, h);
+		for (const h of hits) if (!kept.has(h.url)) kept.set(h.url, h);
 		state.done.push('search:' + id); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	})));
 	for (let i = 0; i < angles.length; i++) { const p = resolve(wd, `search-a${String(i + 1).padStart(2, '0')}.json`); if (existsSync(p)) for (const h of parse_hits(readFileSync(p, 'utf8'))) if (!kept.has(h.url)) kept.set(h.url, h); }
-	const urls = [...kept.values()].slice(0, MAX_PAGES * 2); // search gives ~50, cap later
-	console.log(`\n${urls.length} unique urls (cap ${MAX_PAGES})`);
-	const capped = urls.slice(0, MAX_PAGES);
+	const capped = [...kept.values()].slice(0, MAX_PAGES);
 
-	// scrape + extract parallel
 	const plim = pLimit(N);
 	const sources: Array<{ url: string; title: string }> = [];
 	await Promise.all(capped.map(h => plim(async () => {
 		const pid = pid_of(h.url); if (state.done.includes('page:' + pid)) { sources.push({ url: h.url, title: h.title }); return; }
-		console.log(`\n── page ${h.url} ──`);
 		const txt_path = resolve(wd, 'pages', `${pid}.txt`);
 		let text = existsSync(txt_path) ? readFileSync(txt_path, 'utf8') : '';
 		if (!text) { const s = await scrape_page(h.url, resolve(wd, `scrape-${pid}.md`)); text = s || h.excerpt || ''; if (text) write_atomic(txt_path, text); }
-		if (!text.trim()) { console.log('  empty'); state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n'); return; }
+		if (!text.trim()) { state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n'); return; }
 		sources.push({ url: h.url, title: h.title });
-		console.log('  → extract');
 		const raw = await llm(extract_prompt(h.url, text));
 		const claims = parse_extract(raw, h.url);
-		const ext = resolve(wd, 'extracts', `${pid}.json`); write_atomic(ext, JSON.stringify({ source_url: h.url, claims }, null, '\t') + '\n');
-		console.log(`  ← ${claims.length} claims`);
+		write_atomic(resolve(wd, 'extracts', `${pid}.json`), JSON.stringify({ source_url: h.url, claims }, null, '\t') + '\n');
 		state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	})));
-	// reload sources from disk for ledger (covers resume)
+
 	const srcSet = new Map<string, { url: string; title: string }>();
 	for (const h of capped) srcSet.set(h.url, { url: h.url, title: h.title });
-	if (existsSync(resolve(wd, 'pages'))) { for (const f of readdirSync(resolve(wd, 'pages'))) if (f.endsWith('.meta.json')) try { const m = JSON.parse(readFileSync(resolve(wd, 'pages', f), 'utf8')); if (m.url) srcSet.set(m.url, { url: m.url, title: m.title || '' }); } catch {} }
 	const allSources = [...srcSet.values()];
 
 	const extracts = capped.map(h => resolve(wd, 'extracts', `${pid_of(h.url)}.json`)).filter(existsSync);
 	if (!extracts.length) die('no extracts');
-	// ingest -> gate inline
 	const raw_path = resolve(wd, 'claims.raw.jsonl'); const existing = load_jsonl(raw_path);
-	let n_new = 0;
 	for (const p of extracts) {
 		const d = JSON.parse(readFileSync(p, 'utf8')) as { claims?: unknown[]; source_url?: string };
 		const cs = Array.isArray(d.claims) ? d.claims as Record<string, unknown>[] : [];
-		// avoid double ingest: check if already in existing by source
 		if (existing.some(r => r.source_url === d.source_url)) continue;
-		for (let i = 0; i < cs.length; i++) { const c = cs[i] as Record<string, unknown>; if (!c.source_url) c.source_url = d.source_url; if (!c.id) c.id = `${pid_of(String(c.source_url))}_${i}`; existing.push(c); n_new++; }
+		for (let i = 0; i < cs.length; i++) { const c = cs[i] as Record<string, unknown>; if (!c.source_url) c.source_url = d.source_url; if (!c.id) c.id = `${pid_of(String(c.source_url))}_${i}`; existing.push(c); }
 	}
 	write_jsonl(raw_path, existing);
-	console.log(`ingested ${n_new} new claims (${existing.length} total)`);
 
-	// gate
 	const cache: Record<string, string> = {};
 	function text_for(url: string) { const k = normalize_url(url); if (k in cache) return cache[k]; const p = resolve(wd, 'pages', `${pid_of(url)}.txt`); const t = existsSync(p) ? readFileSync(p, 'utf8') : ''; cache[k] = t; return t; }
 	const gated = assign_status(existing.map(c => gate_claim(c as Record<string, unknown>, text_for(String(c.source_url || '')))));
 	write_jsonl(resolve(wd, 'claims.gated.jsonl'), gated);
-	console.log(`gated ${gated.length} verified=${gated.filter(g => g.verified).length}`);
 
-	// write ledger
 	const meta = JSON.parse(readFileSync(meta_path, 'utf8'));
 	const md = render_ledger(meta, gated, allSources);
-	const out = resolve(ROOT, `${slug}.md`); write_atomic(out, md);
-	console.log(`\nwrite → ${out}\n0 — done`);
+	write_atomic(resolve(ROOT, `${slug}.md`), md);
+	console.log(`write → ${resolve(ROOT, `${slug}.md`)}\n0 — done`);
 }
 
 async function main() {
 	const args = process.argv.slice(2);
 	if (!args.length || args.includes('-h') || args.includes('--help')) {
-		console.log(`research "<question>" [--angle q] [--slug s] [--resume s] [--model p/id] [--reasoning high] [--verbose]\n  --angle can repeat; --resume resumes slug; --slug forces slug`);
+		console.log(`research "<question>" [--angle q] [--slug s] [--resume s] [--model p/id]`);
 		process.exit(0);
 	}
-	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash'; let reasoning = process.env.RESEARCH_REASONING || '';
+	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash';
 	let explicitSlug: string | null = null; let resumeSlug: string | null = null; const rest: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === '--angle') { const v = args[++i]; if (!v) die('--angle needs text'); angles.push(v); }
 		else if (a === '--model') spec = args[++i] || die('--model needs p/id');
-		else if (a === '--reasoning') reasoning = args[++i] || die('--reasoning needs value');
 		else if (a === '--slug') explicitSlug = args[++i] || die('--slug needs value');
 		else if (a === '--resume') resumeSlug = args[++i] || die('--resume needs slug');
-		else if (a === '--verbose' || a === '--quiet') { /* flag handled */ }
-		else if (a === '--think' || a === '--fast' || a === '--no-verbose') { console.error(`note: ${a} removed (minimal)`); }
 		else if (a.startsWith('--')) die(`unknown flag ${a}`);
 		else rest.push(a);
 	}
-	CFG = make_cfg(spec, reasoning);
+	CFG = make_cfg(spec);
 	if (resumeSlug) {
 		const wd = resolve(ROOT, resumeSlug); if (!existsSync(resolve(wd, 'state.json')) && !existsSync(resolve(wd, 'meta.json'))) die(`no workspace for --resume ${resumeSlug}`);
 		const st = JSON.parse(readFileSync(resolve(wd, 'state.json'), 'utf8')) as State;
@@ -282,7 +248,6 @@ async function main() {
 	const first = rest[0] || die('need <question> or --resume <slug>');
 	const maybeWd = resolve(ROOT, first);
 	if (rest.length === 1 && !explicitSlug && (existsSync(resolve(maybeWd, 'state.json')) || existsSync(resolve(maybeWd, 'meta.json')))) {
-		console.error(`note: "${first}" looks like slug — resuming. Use --resume for explicit.`);
 		const st = JSON.parse(readFileSync(resolve(maybeWd, 'state.json'), 'utf8')) as State;
 		const q = st.question || first; if (!angles.length && st.angles?.length) angles.push(...st.angles);
 		await run(q, first, angles); return;
