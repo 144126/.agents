@@ -53,7 +53,7 @@ function make_cfg(spec: string): Cfg {
 async function llm(prompt: string): Promise<string> {
 	if (!CFG) die('no cfg');
 	const url = CFG.baseUrl + '/chat/completions';
-	const body = { model: CFG.model, messages: [{ role: 'user', content: prompt }], max_tokens: CFG.max_tokens, temperature: 0.2 };
+	const body = { model: CFG.model, messages: [{ role: 'user', content: prompt }], max_tokens: CFG.max_tokens, temperature: 0.2, reasoning: { effort: 'low' } };
 	for (let i = 1; i <= 3; i++) {
 		const ac = new AbortController(); const t = setTimeout(() => ac.abort(), CFG!.timeout);
 		try {
@@ -83,14 +83,24 @@ function parse_hits(raw: string): Hit[] {
 	return out;
 }
 async function search_angle(q: string, dest: string): Promise<Hit[]> {
-	const r = await sh('firecrawl', ['search', q, '--limit', '9', '--json', '-o', dest], 90000);
-	if (!existsSync(dest)) { console.error(`  ! search failed: ${r.err.slice(0, 120) || r.out.slice(0, 120)}`); return []; }
-	return parse_hits(readFileSync(dest, 'utf8'));
+	const r = await sh('tinyfish', ['search', 'query', q], 90000);
+	if (!r.ok) { console.error(`  ! search failed: ${r.err.slice(0, 180) || r.out.slice(0, 180)}`); return []; }
+	try { writeFileSync(dest, r.out); } catch {}
+	if (!r.out.trim()) { console.error(`  ! search empty response for: ${q.slice(0, 80)}`); return []; }
+	try { const j = JSON.parse(r.out) as { error?: unknown }; if (j?.error) { console.error(`  ! search error: ${String(j.error).slice(0, 180)}`); return []; } } catch {}
+	return parse_hits(r.out);
 }
 async function scrape_page(url: string, dest: string): Promise<string> {
-	const r = await sh('firecrawl', ['scrape', url, '-o', dest], 90000);
-	if (!existsSync(dest)) return '';
-	return readFileSync(dest, 'utf8');
+	const r = await sh('tinyfish', ['fetch', 'content', 'get', url, '--format', 'markdown'], 90000);
+	if (!r.out.trim()) return '';
+	let text = '';
+	try {
+		const j = JSON.parse(r.out) as { error?: unknown; results?: Array<{ text?: unknown }> };
+		if ((j as { error?: unknown }).error) { console.error(`  ! fetch error: ${String((j as { error: unknown }).error).slice(0, 180)}`); return ''; }
+		text = typeof j.results?.[0]?.text === 'string' ? String(j.results[0].text) : '';
+	} catch { text = r.out; }
+	if (text) try { writeFileSync(dest, text); } catch {}
+	return text;
 }
 
 function extract_prompt(url: string, page: string): string {
@@ -227,7 +237,7 @@ async function main() {
 		console.log(`research "<question>" [--angle q] [--slug s] [--resume s] [--model p/id]`);
 		process.exit(0);
 	}
-	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/z-ai/glm-5.3-flash';
+	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/meta/muse-spark-1.3-contributor';
 	let explicitSlug: string | null = null; let resumeSlug: string | null = null; const rest: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];

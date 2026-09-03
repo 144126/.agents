@@ -11,7 +11,7 @@ const load=f=>{
   const ks=Object.keys(j).filter(k=>k!=='_').sort()
   return {p:j._||'',a:ks.map(k=>j[k].s),d:ks.map(k=>j[k].d||0)}
 }
-const MODEL='z-ai/glm-5.3-flash'
+const MODEL='meta/muse-spark-1.3-contributor'
 const save=(f,p,a,d)=>{mkdirSync(dirname(f),{recursive:true});writeFileSync(f,JSON.stringify({_:p,a,d},null,'\t')+'\n')}
 const prompt=(p,s)=>`Think extremely deeply about this ONE angle. Do not look at prior conclusions.\n\nGlobal context:\n${p||'(none)'}\n\nAngle:\n${s}\n\nFrom first principles. Steelman both sides. Look for contradictions. Prefer concrete.\n3–8 atomic conclusions from this angle only.\nOutput ONLY markdown bullets: "- <sentence>"`
 async function call(content){
