@@ -2,7 +2,7 @@
 // search -> scrape -> extract -> gate -> ~/search/<slug>.md
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 
@@ -12,7 +12,6 @@ type State = { question: string; slug: string; done: string[]; angles?: string[]
 
 const PROVIDERS: Record<string, { baseUrl: () => string; apiKey: () => string }> = {
 	'openrouter': { baseUrl: () => (process.env.OPENROUTER_BASE || 'https://openrouter.ai/api/v1').replace(/\/+$/, ''), apiKey: () => process.env.OPENROUTER_API_KEY || '' },
-	'amazon-bedrock-mantle': { baseUrl: () => (process.env.AMAZON_BEDROCK_MANTLE_OPENAI_COMPATIBLE_URL || 'https://bedrock-mantle.us-west-2.api.aws/openai/v1').replace(/\/+$/, ''), apiKey: () => process.env.AMAZON_BEDROCK_MANTLE_API_KEY || '' },
 };
 let CFG: Cfg | null = null;
 const ROOT = resolve(homedir(), 'search');
@@ -82,15 +81,13 @@ function parse_hits(raw: string): Hit[] {
 	}
 	return out;
 }
-async function search_angle(q: string, dest: string): Promise<Hit[]> {
+async function search_angle(q: string): Promise<Hit[]> {
 	const r = await sh('tinyfish', ['search', 'query', q], 90000);
-	if (!r.ok) { console.error(`  ! search failed: ${r.err.slice(0, 180) || r.out.slice(0, 180)}`); return []; }
-	try { writeFileSync(dest, r.out); } catch {}
-	if (!r.out.trim()) { console.error(`  ! search empty response for: ${q.slice(0, 80)}`); return []; }
+	if (!r.ok || !r.out.trim()) return [];
 	try { const j = JSON.parse(r.out) as { error?: unknown }; if (j?.error) { console.error(`  ! search error: ${String(j.error).slice(0, 180)}`); return []; } } catch {}
 	return parse_hits(r.out);
 }
-async function scrape_page(url: string, dest: string): Promise<string> {
+async function scrape_page(url: string): Promise<string> {
 	const r = await sh('tinyfish', ['fetch', 'content', 'get', url, '--format', 'markdown'], 90000);
 	if (!r.out.trim()) return '';
 	let text = '';
@@ -99,7 +96,6 @@ async function scrape_page(url: string, dest: string): Promise<string> {
 		if ((j as { error?: unknown }).error) { console.error(`  ! fetch error: ${String((j as { error: unknown }).error).slice(0, 180)}`); return ''; }
 		text = typeof j.results?.[0]?.text === 'string' ? String(j.results[0].text) : '';
 	} catch { text = r.out; }
-	if (text) try { writeFileSync(dest, text); } catch {}
 	return text;
 }
 
@@ -118,7 +114,7 @@ function parse_extract(raw: string, url: string) {
 const NUM_RE = /\d[\d,]*(?:\.\d+)?\s?(?:%|x|×)?/g;
 function norm_ws(s: string) { return (s || '').replace(/\s+/g, ' ').trim(); }
 function norm_key(s: string) { return norm_ws(s).toLowerCase().replace(/[^a-z0-9]+/g, ''); }
-function normalize_url(url: string) { try { const u = new URL(url.trim()); let h = u.hostname.toLowerCase().replace(/^www\./, ''); const q = [...u.searchParams.entries()].filter(([k]) => !['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'ref', 'fbclid', 'gclid'].includes(k.toLowerCase())); q.sort((a, b) => a[0] === b[0] ? a[1].localeCompare(b[1]) : a[0].localeCompare(b[0])); const qs = q.map(([k, v]) => v ? `${k}=${v}` : k).join('&'); const path = (u.pathname || '').replace(/\/+$/, ''); return `${h}${path}${qs ? `?${qs}` : ''}`; } catch { return url.trim().toLowerCase(); } }
+function normalize_url(url: string) { try { const u = new URL(url.trim()); return (u.hostname.toLowerCase().replace(/^www\./, '') + u.pathname.replace(/\/+$/, '')).toLowerCase(); } catch { return url.trim().toLowerCase(); } }
 function domain_of(url: string) { try { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); } catch { return ''; } }
 function registrable_domain(url: string) { const h = domain_of(url).split('.'); return h.length >= 2 ? h.slice(-2).join('.') : domain_of(url); }
 function quote_in_text(q: string, t: string) { if (!q?.trim() || !t) return false; if (t.includes(q)) return true; const qk = norm_key(q); return !!qk && norm_key(t).includes(qk); }
@@ -159,9 +155,6 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 	const state_path = resolve(wd, 'state.json');
 	let state: State = existsSync(state_path) ? JSON.parse(readFileSync(state_path, 'utf8')) as State : { question, slug, done: [] };
 	state.question = question; state.slug = slug; write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
-	const meta_path = resolve(wd, 'meta.json');
-	if (!existsSync(meta_path)) write_atomic(meta_path, JSON.stringify({ slug, subject: question, question, created: new Date().toISOString(), updated: new Date().toISOString() }, null, '\t'));
-	else { const m = JSON.parse(readFileSync(meta_path, 'utf8')); m.question = question; m.updated = new Date().toISOString(); write_atomic(meta_path, JSON.stringify(m, null, '\t')); }
 
 	console.log(`research: ${slug}`);
 
@@ -183,11 +176,10 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 	const lim = pLimit(N);
 	await Promise.all(angles.map((q, i) => lim(async () => {
 		const id = `a${String(i + 1).padStart(2, '0')}`; if (state.done.includes('search:' + id)) return;
-		const dest = resolve(wd, `search-${id}.json`); const hits = await search_angle(q, dest);
+		const hits = await search_angle(q);
 		for (const h of hits) if (!kept.has(h.url)) kept.set(h.url, h);
 		state.done.push('search:' + id); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n');
 	})));
-	for (let i = 0; i < angles.length; i++) { const p = resolve(wd, `search-a${String(i + 1).padStart(2, '0')}.json`); if (existsSync(p)) for (const h of parse_hits(readFileSync(p, 'utf8'))) if (!kept.has(h.url)) kept.set(h.url, h); }
 	const capped = [...kept.values()].slice(0, MAX_PAGES);
 
 	const plim = pLimit(N);
@@ -196,7 +188,7 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 		const pid = pid_of(h.url); if (state.done.includes('page:' + pid)) { sources.push({ url: h.url, title: h.title }); return; }
 		const txt_path = resolve(wd, 'pages', `${pid}.txt`);
 		let text = existsSync(txt_path) ? readFileSync(txt_path, 'utf8') : '';
-		if (!text) { const s = await scrape_page(h.url, resolve(wd, `scrape-${pid}.md`)); text = s || h.excerpt || ''; if (text) write_atomic(txt_path, text); }
+		if (!text) { const s = await scrape_page(h.url); text = s || h.excerpt || ''; if (text) write_atomic(txt_path, text); }
 		if (!text.trim()) { state.done.push('page:' + pid); write_atomic(state_path, JSON.stringify(state, null, '\t') + '\n'); return; }
 		sources.push({ url: h.url, title: h.title });
 		const raw = await llm(extract_prompt(h.url, text));
@@ -225,8 +217,7 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 	const gated = assign_status(existing.map(c => gate_claim(c as Record<string, unknown>, text_for(String(c.source_url || '')))));
 	write_jsonl(resolve(wd, 'claims.gated.jsonl'), gated);
 
-	const meta = JSON.parse(readFileSync(meta_path, 'utf8'));
-	const md = render_ledger(meta, gated, allSources);
+	const md = render_ledger({ slug, subject: question, question }, gated, allSources);
 	write_atomic(resolve(ROOT, `${slug}.md`), md);
 	console.log(`write → ${resolve(ROOT, `${slug}.md`)}\n0 — done`);
 }
@@ -234,36 +225,30 @@ async function run(question: string, slug: string, explicitAngles: string[]) {
 async function main() {
 	const args = process.argv.slice(2);
 	if (!args.length || args.includes('-h') || args.includes('--help')) {
-		console.log(`research "<question>" [--angle q] [--slug s] [--resume s] [--model p/id]`);
+		console.log(`research "<question>" [--angle q] [--resume s] [--model p/id]`);
 		process.exit(0);
 	}
 	const angles: string[] = []; let spec = process.env.RESEARCH_MODEL || 'openrouter/meta/muse-spark-1.3-contributor';
-	let explicitSlug: string | null = null; let resumeSlug: string | null = null; const rest: string[] = [];
+	let resumeSlug: string | null = null; const rest: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
 		if (a === '--angle') { const v = args[++i]; if (!v) die('--angle needs text'); angles.push(v); }
 		else if (a === '--model') spec = args[++i] || die('--model needs p/id');
-		else if (a === '--slug') explicitSlug = args[++i] || die('--slug needs value');
 		else if (a === '--resume') resumeSlug = args[++i] || die('--resume needs slug');
 		else if (a.startsWith('--')) die(`unknown flag ${a}`);
 		else rest.push(a);
 	}
 	CFG = make_cfg(spec);
-	if (resumeSlug) {
-		const wd = resolve(ROOT, resumeSlug); if (!existsSync(resolve(wd, 'state.json')) && !existsSync(resolve(wd, 'meta.json'))) die(`no workspace for --resume ${resumeSlug}`);
+	const first = rest[0] || resumeSlug || die('need <question> or --resume <slug>');
+	const slug = resumeSlug || slugify(rest.join(' ').trim() || first);
+	const wd = resolve(ROOT, slug);
+	if (existsSync(resolve(wd, 'state.json'))) {
 		const st = JSON.parse(readFileSync(resolve(wd, 'state.json'), 'utf8')) as State;
-		const q = st.question || resumeSlug; if (!angles.length && st.angles?.length) angles.push(...st.angles);
-		await run(q, resumeSlug, angles); return;
-	}
-	const first = rest[0] || die('need <question> or --resume <slug>');
-	const maybeWd = resolve(ROOT, first);
-	if (rest.length === 1 && !explicitSlug && (existsSync(resolve(maybeWd, 'state.json')) || existsSync(resolve(maybeWd, 'meta.json')))) {
-		const st = JSON.parse(readFileSync(resolve(maybeWd, 'state.json'), 'utf8')) as State;
 		const q = st.question || first; if (!angles.length && st.angles?.length) angles.push(...st.angles);
-		await run(q, first, angles); return;
+		await run(q, slug, angles); return;
 	}
+	if (resumeSlug) die(`no workspace for --resume ${resumeSlug}`);
 	const question = rest.join(' ').trim() || first;
-	const slug = explicitSlug || slugify(question);
 	await run(question, slug, angles);
 }
 main().catch(e => { console.error((e as Error).stack || (e as Error).message); process.exit(1); });

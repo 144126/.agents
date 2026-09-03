@@ -5,12 +5,7 @@ import {homedir} from 'node:os'
 const THINK=resolve(homedir(),'think')
 const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,48)||'topic'
 const die=m=>{console.error(m);process.exit(1)}
-const load=f=>{
-  const j=JSON.parse(readFileSync(f,'utf8'))
-  if(Array.isArray(j.a)) return {p:j._||'',a:j.a,d:j.d||j.a.map(()=>0)}
-  const ks=Object.keys(j).filter(k=>k!=='_').sort()
-  return {p:j._||'',a:ks.map(k=>j[k].s),d:ks.map(k=>j[k].d||0)}
-}
+const load=f=>{const j=JSON.parse(readFileSync(f,'utf8'));return {p:j._||'',a:j.a,d:j.d||j.a.map(()=>0)}}
 const MODEL='meta/muse-spark-1.3-contributor'
 const save=(f,p,a,d)=>{mkdirSync(dirname(f),{recursive:true});writeFileSync(f,JSON.stringify({_:p,a,d},null,'\t')+'\n')}
 const prompt=(p,s)=>`Think extremely deeply about this ONE angle. Do not look at prior conclusions.\n\nGlobal context:\n${p||'(none)'}\n\nAngle:\n${s}\n\nFrom first principles. Steelman both sides. Look for contradictions. Prefer concrete.\n3–8 atomic conclusions from this angle only.\nOutput ONLY markdown bullets: "- <sentence>"`
@@ -37,9 +32,8 @@ async function run(file){
     console.log(`\n── ${i+1}/${a.length} a${String(i+1).padStart(2,'0')} ──\n${a[i].slice(0,160)}`)
     const raw=await call(prompt(p,a[i]))
     const lines=raw.split('\n').map(l=>l.trim()).filter(Boolean)
-    let bullets=lines.filter(l=>/^[-*•]\s+/.test(l)).map(l=>`- ${l.replace(/^[-*•]\s+/,'').trim()}`)
-    if(!bullets.length) bullets=lines.map(l=>l.startsWith('-')?l:`- ${l}`)
-    const clean=bullets
+    let clean=lines.filter(l=>/^[-*•]\s+/.test(l)).map(l=>`- ${l.replace(/^[-*•]\s+/,'').trim()}`)
+    if(!clean.length) clean=lines.map(l=>`- ${l}`)
     if(!clean.length) die('no bullets')
     clean.forEach(b=>console.log(`  ${b}`))
     writeFileSync(conc,(existsSync(conc)?readFileSync(conc,'utf8'):'')+(clean.join('\n')+'\n'))
