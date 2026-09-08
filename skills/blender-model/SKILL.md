@@ -1,6 +1,6 @@
 ---
 name: blender-model
-description: Build anything in Blender via Python — model, materials, lighting, cameras, render, animation, export. Renders after every change, looks at the picture, fixes until right. Never reports success without a visual pass. Use when user wants a 3D model, scene, render, animation, material, or any Blender work.
+description: Build anything in Blender via Python — model, materials, lighting, cameras, render, animation, export. Renders after every change, looks at the picture, fixes until right. Never reports success without a visual pass. Use when the user says blender, 3d model, bpy, or gltf. Not for a 2d picture, a hyperframes video, or a css animation.
 ---
 
 # blender-model — see it, fix it, repeat
