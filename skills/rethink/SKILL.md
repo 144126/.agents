@@ -1,6 +1,6 @@
 ---
 name: rethink
-description: Topic from N angles.
+description: run the rethink cli to write N angles on one topic into ~/think. use when the user says rethink, or asks for N angles. not for ordinary answers.
 ---
 
 # rethink
