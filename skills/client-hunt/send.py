@@ -36,7 +36,7 @@ def send(l, subject, body, reply=False):
     else:
         l['z'] = m['Message-ID'] = make_msgid(domain='gmail.com')
     m.set_content(body + FOOT)
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=60) as s:
         s.login(env['GMAIL_USER'], env['GMAIL_APP_PASSWORD'])
         s.send_message(m)
     with log.open('a') as f:
@@ -56,7 +56,7 @@ elif mode == 'send':
         l['k'], l['d'] = 's', str(today)
         p.write_text(json.dumps(l, indent=1))
 elif mode == 'follow':
-    im = imaplib.IMAP4_SSL('imap.gmail.com')
+    im = imaplib.IMAP4_SSL('imap.gmail.com', timeout=60)
     im.login(env['GMAIL_USER'], env['GMAIL_APP_PASSWORD'])
     im.select('"[Gmail]/All Mail"', readonly=True)
     found = lambda q: bool(im.search(None, 'X-GM-RAW', f'"{q}"')[1][0].split())

@@ -23,7 +23,7 @@ ADDRESS=...               # CAN-SPAM needs a postal address in every email
 ## Cycle
 
 1. `python3 ~/.agents/skills/client-hunt/find.py "<city, state>"`. US cities only (US law allows cold email; Nigeria's NDPA expects consent). OpenStreetMap is slow: 3 to 10 minutes. Output: score, problem codes, category, id, email, site.
-2. Take the top 10. Check each claim yourself: `curl -sI --doh-url https://1.1.1.1/dns-query https://<host>`, then the same with `-sL http://<host> | grep -i viewport`. The local resolver fails at random and fakes "site down", so always pass `--doh-url`. Set `k` to `x` on any lead you cannot confirm, that is a chain, or whose email is on a dead domain.
+2. Take the top 10. Check each claim yourself: `curl -sI --doh-url https://1.1.1.1/dns-query https://<host>`, then the same with `-sL http://<host> | grep -i viewport`. The local resolver fails at random and fakes "site down", so always pass `--doh-url`. Set `k` to `x` on any lead you cannot confirm, that is a chain, or whose email is on a dead domain. Old ISP mailboxes bounce: 2 of 2 `att.net` did on 2026-10-06.
 3. Fill the page keys from `t` (their own site text). Do not invent services, awards, or prices. If `t` is empty, keep the copy plain.
 4. `python3 ~/.agents/skills/client-hunt/render.py <id>...`, then commit and push `~/i/dump` (it deploys on push). Open each `u` to check it.
 5. Write `j` and `m`, and set `k` to `q`.
