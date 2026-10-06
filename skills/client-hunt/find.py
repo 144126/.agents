@@ -12,7 +12,7 @@ D = pathlib.Path.home() / '.client-hunt' / 'leads'
 UA = {'User-Agent': 'client-hunt/1 (+https://ed.apexlinks.org)'}
 BROWSER = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'}
 SOCIAL = ('facebook.com', 'instagram.com', 'yelp.com', 'linktr.ee', 'business.site', 'business.page', 'nextdoor.com')
-PARKED = ('domain is for sale', 'buy this domain', 'domain may be for sale', 'parked free', 'account suspended', 'account has been suspended', 'this site is currently unavailable', 'hugedomains', 'sedoparking', 'site not found', 'location.href="/lander"')
+PARKED = ('domain is for sale', 'buy this domain', 'domain may be for sale', 'parked free', 'account suspended', 'account has been suspended', 'this site is currently unavailable', 'hugedomains', 'sedoparking', 'site not found', 'location.href="/lander"', '<title>nexcess</title>', 'welcome to nginx', 'apache2 default page', 'future home of something quite cool', '<title>index of /')
 POINTS = {'d': 3, 'o': 3, 'h': 2, 'm': 2, 'y': 1}
 AMENITY = {'dentist', 'veterinary', 'restaurant', 'cafe', 'car_wash', 'driving_school', 'doctors', 'clinic', 'childcare', 'bar', 'fast_food'}
 OFFICE = {'lawyer', 'accountant', 'estate_agent', 'insurance', 'architect', 'consulting', 'tax_advisor', 'financial', 'financial_advisor', 'surveyor', 'therapist', 'moving_company', 'company', 'it', 'photographer', 'travel_agent', 'notary'}
@@ -50,7 +50,7 @@ def fetch(url):
         return ('gone' if e.code in (404, 410) else '?'), ''
     except Exception as e:
         r = getattr(e, 'reason', e)
-        if isinstance(r, (ssl.SSLCertVerificationError, ConnectionRefusedError)):
+        if isinstance(r, (ssl.SSLCertVerificationError, ConnectionRefusedError)) or (isinstance(r, ssl.SSLError) and 'ALERT' in str(r)):
             return 'nohttps', ''
         if isinstance(r, socket.gaierror) and r.errno == socket.EAI_NONAME:
             return 'nx', ''
@@ -73,7 +73,7 @@ def check(w):
     low = html.lower()
     if any(p in low for p in PARKED):
         return host, 'd', ''
-    if any(p in low for p in ('captcha', 'just a moment', 'cf-chl')):
+    if any(p in low for p in ('captcha', 'just a moment', 'cf-chl', 'sucuri', 'javascript is required')) or sum(ch < ' ' and ch not in '\t\n\r' for ch in html[:2000]) > 40:
         return host, None, ''
     if not re.search(r'<meta[^>]+viewport', low):
         f += 'm'
