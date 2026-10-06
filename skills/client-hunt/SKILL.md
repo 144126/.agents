@@ -39,6 +39,7 @@ ADDRESS=...               # CAN-SPAM needs a postal address in every email
   - `h`: When I open <host> in Chrome, it shows a "Not secure" warning next to the address.
   - `m`: On a phone, <host> loads as a shrunken desktop page, so people have to pinch and zoom.
   - `d`: I tried <host> today and it doesn't load.
+  - `s`: <host> is built in Flash, which no browser has played since 2021, so visitors see a blank page.
   - `o`: <name> sends people to a Facebook page instead of its own website.
   - `y`: The footer on <host> still says © <year>, which can make people think you've closed.
 - Offer: `I can finish it and put it live on your domain this week for $360 flat. No monthly fees.`

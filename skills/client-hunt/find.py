@@ -2,7 +2,7 @@
 # find.py "<city, state>" -> new leads in ~/.client-hunt/leads/<i>.json, printed best first
 # lead keys: i id, n name, e email, w website, p phone, a address, o hours, r city, c category,
 #   f problem codes, s score, t site text, k status
-# f: d site down, o only a social page, h no https, m not phone friendly, y old copyright year
+# f: d site down, s built in Flash, o only a social page, h no https, m not phone friendly, y old copyright year
 # k: n new, q drafted, o approved, s sent, 1 follow-up 1 sent, 2 follow-up 2 sent, r replied, x dead
 import json, pathlib, re, socket, ssl, sys, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +13,7 @@ UA = {'User-Agent': 'client-hunt/1 (+https://ed.apexlinks.org)'}
 BROWSER = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'}
 SOCIAL = ('facebook.com', 'instagram.com', 'yelp.com', 'linktr.ee', 'business.site', 'business.page', 'nextdoor.com')
 PARKED = ('domain is for sale', 'buy this domain', 'domain may be for sale', 'parked free', 'account suspended', 'account has been suspended', 'this site is currently unavailable', 'hugedomains', 'sedoparking', 'site not found', 'location.href="/lander"', '<title>nexcess</title>', 'welcome to nginx', 'apache2 default page', 'future home of something quite cool', '<title>index of /')
-POINTS = {'d': 3, 'o': 3, 'h': 2, 'm': 2, 'y': 1}
+POINTS = {'d': 3, 's': 3, 'o': 3, 'h': 2, 'm': 2, 'y': 1}
 AMENITY = {'dentist', 'veterinary', 'restaurant', 'cafe', 'car_wash', 'driving_school', 'doctors', 'clinic', 'childcare', 'bar', 'fast_food'}
 OFFICE = {'lawyer', 'accountant', 'estate_agent', 'insurance', 'architect', 'consulting', 'tax_advisor', 'financial', 'financial_advisor', 'surveyor', 'therapist', 'moving_company', 'company', 'it', 'photographer', 'travel_agent', 'notary'}
 
@@ -75,6 +75,8 @@ def check(w):
         return host, 'd', ''
     if any(p in low for p in ('captcha', 'just a moment', 'cf-chl', 'sucuri', 'javascript is required')) or sum(ch < ' ' and ch not in '\t\n\r' for ch in html[:2000]) > 40:
         return host, None, ''
+    if 'shockwave-flash' in low or '.swf"' in low:
+        return host, 's', ''
     if not re.search(r'<meta[^>]+viewport', low):
         f += 'm'
     years = [int(y) for s in re.findall(r'(?:©|&copy;|&#169;|copyright)[^<]{0,40}', low) for y in re.findall(r'(?:19|20)\d\d', s)]
