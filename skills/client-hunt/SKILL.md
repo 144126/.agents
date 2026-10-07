@@ -16,7 +16,7 @@ Data: `~/.client-hunt/leads/<id>.json`. Key legend at the top of each script.
 ```
 GMAIL_USER=...
 GMAIL_APP_PASSWORD=...    # https://myaccount.google.com/apppasswords (needs 2-Step Verification)
-FROM_NAME=Ed Hogan
+FROM_NAME=Gold Hogan
 ADDRESS=...               # CAN-SPAM needs a postal address in every email
 ```
 

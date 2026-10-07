@@ -4,6 +4,8 @@
 import html, json, os, pathlib, sys
 
 H = pathlib.Path.home() / '.client-hunt'
+F = H / '.env'
+NAME = {**(dict(l.split('=', 1) for l in F.read_text().splitlines() if '=' in l) if F.exists() else {}), **os.environ}.get('FROM_NAME', 'Gold Hogan')
 SITE = pathlib.Path(os.environ.get('CLIENT_HUNT_SITE', pathlib.Path.home() / 'i/dump/static'))
 BASE = os.environ.get('CLIENT_HUNT_URL', 'https://draft.apexlinks.org')
 CSS = '''*{box-sizing:border-box;margin:0}body{font:17px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:#111;background:#fff}
@@ -30,7 +32,7 @@ for i in sys.argv[1:]:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>{e["n"]}</title><style>:root{{--a:{e.get("h", "#1d4ed8")}}}{CSS}</style></head><body>
-<div class="note">Free homepage draft made by Ed Hogan for {e["n"]}. Not the official site.</div>
+<div class="note">Free homepage draft made by {NAME} for {e["n"]}. Not the official site.</div>
 <div class="w"><header><div class="logo">{e["n"]}</div>{call}</header>
 <div class="hero"><h1>{e["g"]}</h1><p class="lede">{e["l"]}</p><div class="row">{call}<a class="btn ghost" href="#contact">Hours and location</a></div></div>
 {'<section><h2>What we offer</h2><div class="grid">' + ''.join(f'<div class="card">{html.escape(s)}</div>' for s in l['v']) + '</div></section>' if l.get('v') else ''}
