@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.error import HTTPError
 
 D = pathlib.Path.home() / '.client-hunt' / 'leads'
-UA = {'User-Agent': 'client-hunt/1 (+https://ed.apexlinks.org)'}
+UA = {'User-Agent': 'client-hunt/1 (+https://54.apexlinks.org)'}
 BROWSER = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'}
 SOCIAL = ('facebook.com', 'instagram.com', 'yelp.com', 'linktr.ee', 'business.site', 'business.page', 'nextdoor.com')
 PARKED = ('domain is for sale', 'buy this domain', 'domain may be for sale', 'parked free', 'account suspended', 'account has been suspended', 'this site is currently unavailable', 'hugedomains', 'sedoparking', 'site not found', 'location.href="/lander"', '<title>nexcess</title>', 'welcome to nginx', 'apache2 default page', 'future home of something quite cool', '<title>index of /')

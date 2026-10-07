@@ -12,7 +12,7 @@ H = pathlib.Path.home() / '.client-hunt'
 CAP = 30
 F = H / '.env'
 env = {**(dict(l.split('=', 1) for l in F.read_text().splitlines() if '=' in l) if F.exists() else {}), **os.environ}
-FOOT = f"\n\n{env.get('FROM_NAME', 'Gold Hogan')}\ned.apexlinks.org\n{env.get('ADDRESS', '<ADDRESS>')}\nIf you'd rather not hear from me, just reply \"no\"."
+FOOT = f"\n\n{env.get('FROM_NAME', '54')}\n54.apexlinks.org\n{env.get('ADDRESS', '<ADDRESS>')}\nIf you'd rather not hear from me, just reply \"no\"."
 FOLLOW = {'s': (3, '1', 'Just bumping this in case it got buried. The draft is still up: {u}'),
           '1': (7, '2', 'Last note from me. If now is not the right time, no problem. The draft stays up for another week: {u}')}
 today = datetime.date.today()
@@ -30,7 +30,7 @@ def send(l, subject, body, reply=False):
     if sum(1 for x in (log.read_text().splitlines() if log.exists() else []) if x.startswith(str(today))) >= CAP:
         sys.exit(f'cap {CAP} reached today')
     m = EmailMessage()
-    m['From'], m['To'], m['Subject'] = f"{env.get('FROM_NAME', 'Gold Hogan')} <{env['GMAIL_USER']}>", l['e'], subject
+    m['From'], m['To'], m['Subject'] = f"{env.get('FROM_NAME', '54')} <{env['GMAIL_USER']}>", l['e'], subject
     if reply:
         m['In-Reply-To'] = m['References'] = l['z']
     else:

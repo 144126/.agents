@@ -5,7 +5,7 @@ import html, json, os, pathlib, sys
 
 H = pathlib.Path.home() / '.client-hunt'
 F = H / '.env'
-NAME = {**(dict(l.split('=', 1) for l in F.read_text().splitlines() if '=' in l) if F.exists() else {}), **os.environ}.get('FROM_NAME', 'Gold Hogan')
+NAME = {**(dict(l.split('=', 1) for l in F.read_text().splitlines() if '=' in l) if F.exists() else {}), **os.environ}.get('FROM_NAME', '54')
 SITE = pathlib.Path(os.environ.get('CLIENT_HUNT_SITE', pathlib.Path.home() / 'i/dump/static'))
 BASE = os.environ.get('CLIENT_HUNT_URL', 'https://draft.apexlinks.org')
 CSS = '''*{box-sizing:border-box;margin:0}body{font:17px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;color:#111;background:#fff}
