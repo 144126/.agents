@@ -277,6 +277,8 @@ When migrating from `gemini-2.5-flash-native-audio-preview-12-2025` to `gemini-3
 
 ## Best Practices
 
+SDK 2.10.0: wait for both the session and `setupComplete`, guard every send with `session.conn.ws.readyState === WebSocket.OPEN`, and stop on auth close 1008; transport open must not reset retry counts. When minting partial Live token constraints, set `lockAdditionalFields: []` so tools, prompts, voice, and resumption stay configurable; verify with `pnpm exec vitest run src/lib/voice/live_connection.svelte.spec.ts` and real token-backed setup/resumption.
+
 1. **Use headphones** when testing mic audio to prevent echo/self-interruption
 2. **Enable context window compression** for sessions longer than 15 minutes
 3. **Implement session resumption** to handle connection resets gracefully

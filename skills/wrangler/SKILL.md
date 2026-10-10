@@ -778,6 +778,8 @@ wrangler secrets-store secret get <STORE_ID> my-secret
 wrangler secrets-store secret delete <STORE_ID> my-secret
 ```
 
+`.dev.vars` does not populate Secrets Store `.get()`. Seed local secrets with `pnpm exec wrangler secrets-store secret create <store-id> --name <name> --scopes workers --remote=false --persist-to .wrangler/state` and pipe the value on stdin; omit `--value`. Update the same way with `secret update --secret-id`. Do not inspect values via standalone `getPlatformProxy` (it hangs).
+
 ### Config Binding
 
 ```jsonc
