@@ -22,3 +22,4 @@ with smtplib.SMTP_SSL('smtp.gmail.com', 465) as s:
 - Send only the exact email Ed approved. Sending is outward-facing.
 - Gmail caps at 500 a day. Mass sends get the account blocked.
 - Login fails (535): the app password is wrong or revoked. Make a new one at myaccount.google.com/apppasswords (needs 2-Step Verification).
+- Every email Claude sends goes through this skill. No browser, no other sender.
