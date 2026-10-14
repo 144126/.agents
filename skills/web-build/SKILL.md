@@ -5,6 +5,7 @@ description: Build Ed's websites and webapps with SvelteKit, TypeScript, pnpm, a
 
 # Web build
 
+- Always read the `feel` skill (`~/.claude/skills/feel/SKILL.md`) before building any website or interaction. Install: `git clone https://github.com/diip3sh/feel ~/.claude/skills/feel`.
 - Build only what the request needs. Keep an existing project's stack unless asked to change it.
 - Before product, naming, or design choices, read `~/ed.md` if present. Only on Ed's personal machine, read `~/me.md` if present for project names, paths, lowercase UI text, Svelte runes, Tailwind, fonts, and auth defaults. Else use the user's or team's conventions.
 - Use SvelteKit, TypeScript, and pnpm. Start new projects with `pnpm dlx sv create <path> --template minimal --types ts --install pnpm`. Add prettier, eslint, playwright, tailwindcss, and the Cloudflare adapter through `pnpm dlx sv add`.
