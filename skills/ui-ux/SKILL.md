@@ -7,6 +7,8 @@ description: Design or review any interface so it is professional, pleasant, mem
 
 Research this skill came from — read it first: `~/search/ui-ux-first-principles.md`
 
+Standard for every UI, any project: pass every rule in `foundations.md` (next to this file) before calling UI work done.
+
 A good interface is cheap, successful sense-making. Pretty is easy processing. Gripping is a gap the user can close.
 
 1. First 50 ms: look like the category, stay visually simple.
