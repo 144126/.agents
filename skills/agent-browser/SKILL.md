@@ -77,6 +77,7 @@ Never launch flags on it (`--user-agent`, `--headed`, `--args`...: they spawn Ch
 - Reddit "blocked by network security": cause unknown; matching cookies don't rule out a headless block. Compare Ed's window only if he asks; else its support link.
 - Greenhouse: file input `#resume`. Emails an 8-char code to 1440fl; read it in Gmail.
 - Zoho Recruit: skills box `-add-skills`, type one skill, wait 1.5 s, Enter. CAPTCHA: scroll img into view, screenshot, crop. Success = "Success!" modal, URL unchanged.
+- Fake mic: `--use-file-for-fake-audio-capture` silently plays Chrome's beep instead of the WAV (audio-service sandbox). Inject a getUserMedia override returning a looped `createMediaStreamDestination()` stream before load. Start calls with a trusted click (`Input.dispatchMouseEvent`): a JS `.click()` gives no user activation, so `AudioContext.resume()` hangs.
 - Freelancer: contest may show Open after deadline; check a fresh entries tab. `NETWORK_ERROR` on submit: check My Entries first. Portfolio: `/discover/manage` → Add item, turn off Link a project, title ≤35, tag required, Publish, verify `/portfolio-items/<id>-<slug>`.
 
 Rare: `agent-browser skills get core|electron|slack|dogfood|derive-client`.
