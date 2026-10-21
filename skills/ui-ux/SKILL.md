@@ -21,3 +21,5 @@ A good interface is cheap, successful sense-making. Pretty is easy processing. G
 8. Hover labels: first one ~500 ms so it is not an accident. Once moving between siblings, show the rest now. Leave ~300 ms and the delay resets.
 
 Do not use the golden ratio, “fewer choices is always faster,” or dopamine-as-pleasure as reasons.
+
+Flutter chat forms: keep drafts and saved state outside recycled list children; serialize saves across remounts. Before pushing payment, await the modal route's `completed`, and bound missing audio-drain signals with a timer. Verify with `flutter test` and `flutter analyze`.
