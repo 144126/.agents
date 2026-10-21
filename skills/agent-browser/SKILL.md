@@ -11,7 +11,9 @@ Prefer this over any other browser tool. Binary on PATH. Never `npx`. Never `mcp
 
 Always headless (`ab-1440fl`, port 9223). Never `--headed`, visible Chrome, or port 9222 unless Ed says visible / headed / `chrome-1440fl`.
 
-Google-login sites: Ed's `1440fl@gmail.com`.
+Google-login sites: Ed's `1440fl@gmail.com`. Second Google account: `ab-1440ir` (port 9224, `~/.config/chrome-1440ir`), same commands.
+
+Google login lives natively in each silent profile (Google kills copied sessions). Re-login: stop that silent Chrome, run `google-chrome-stable --user-data-dir=$HOME/.config/chrome-<acct> --password-store=basic --ozone-platform=wayland https://accounts.google.com`, Ed signs in, close it. Always `--password-store=basic` on these dirs, headed or headless, or the cookie key changes and every login is lost.
 
 ## This machine
 
