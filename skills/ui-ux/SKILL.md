@@ -23,3 +23,5 @@ A good interface is cheap, successful sense-making. Pretty is easy processing. G
 Do not use the golden ratio, “fewer choices is always faster,” or dopamine-as-pleasure as reasons.
 
 Flutter chat forms: keep drafts and saved state outside recycled list children; serialize saves across remounts. Before pushing payment, await the modal route's `completed`, and bound missing audio-drain signals with a timer. Verify with `flutter test` and `flutter analyze`.
+
+Palette trials on a live page: inject a `<style>` with `agent-browser eval`, take `agent-browser screenshot --full`, tile it into 4 columns with ffmpeg (`crop` ×4 + `hstack=4`), Read the one image to judge colour rhythm. Scope colour bands as tone classes that remap the semantic tokens; keep button fill/label as constants.
