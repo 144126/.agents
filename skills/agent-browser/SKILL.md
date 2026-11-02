@@ -14,17 +14,19 @@ Rules: always headless. Never `npx`, `mcp`, `--headed`, or the visible Chrome un
 Ed's visible Chrome (default profile, already signed in) is attachable now. Do this first; don't use claude-in-chrome (often "Browser extension is not connected") or sync for it.
 
 ```bash
-WS="ws://127.0.0.1:9222$(sed -n 2p ~/.config/google-chrome/DevToolsActivePort)"
-A="timeout 25 agent-browser --cdp $WS --session vis"
-$A tab                  # list tabs with indexes
-$A tab <index>          # focus Ed's existing tab (no tab new)
-$A get url; $A get title
-$A snapshot -i          # logged in if the page shows Logout / the account name
+A(){ agent-browser --config <(echo '{"pinTab":true}') --auto-connect --session vis "$@"; }   # waits up to 30s for Ed's Allow
+A tab                   # list tabs with indexes
+A tab <index>           # focus Ed's existing tab (no tab new)
+A get url; A get title
+A snapshot -i           # logged in if the page shows Logout / the account name
 ```
 
-- Attached: `~/.config/google-chrome/DevToolsActivePort` exists and `$A tab` lists his tabs. `curl 127.0.0.1:9222/json/version` is empty; that is normal (attach is by WebSocket).
-- Missing file or no tabs: Ed turns on chrome://inspect/#remote-debugging once. Ask him, don't restart his Chrome.
-- Hang or `os error 11`: Ed clicks Allow in the visible window, rerun.
+- Attached: `~/.config/google-chrome/DevToolsActivePort` exists and `A tab` lists his tabs. `curl 127.0.0.1:9222/json/version` is empty; that is normal.
+- `✗ Cannot use --auto-connect and --cdp together`: `~/.agent-browser/config.json` has `"cdp": "9223"` (for ab-1440fl). Keep it; pass a cdp-free config as above (`--config <(echo '{"pinTab":true}')`, checked on 0.41.1).
+- `~/.config/google-chrome/DevToolsActivePort` missing or no tabs: Ed must switch on chrome://inspect/#remote-debugging in visible Chrome first; only then can the Allow prompt appear. Ask him, don't restart his Chrome.
+- Hang or `os error 11`: Ed clicks Allow in the visible window, rerun. Never hand-build a WS URL from DevToolsActivePort.
+- `No running Chrome instance found` after Allow, DevToolsActivePort never written but 9222 listening (0.41.1): `agent-browser --config <(echo '{"pinTab":true}') --cdp ws://127.0.0.1:9222/devtools/browser --session <name>`.
+- Debugging is browser-wide: Allow showing in the 1440fl window is fine for any profile; open the target tab with `google-chrome-stable --profile-directory="Profile N" <url>`.
 - Fallback only if this fails: `ab-1440fl` + `ab-1440fl-sync` (headless copy of cookies).
 - Act only on what Ed asked. Never `close` the session or his tabs.
 
@@ -82,8 +84,7 @@ Why: Google kills sessions copied between browsers. `--password-store=basic` on 
 Launch `chrome-1440fl` (Default profile). Chrome 136+ ignores the port flag on the default profile, so 9222 comes from the chrome://inspect toggle and each new client waits for Ed's Allow (a hang with `os error 11`). `/json/list` 404s; attach by WebSocket:
 
 ```bash
-mapfile -t v < ~/.config/google-chrome/DevToolsActivePort
-agent-browser --cdp "ws://127.0.0.1:${v[0]}${v[1]}" --session <task> tab
+agent-browser --config <(echo '{"pinTab":true}') --auto-connect --session <task> tab
 ```
 
 Never launch flags on it (`--user-agent`, `--headed`, `--args`...: they spawn Chrome for Testing), never `close` its session, never `tab new` on 9222 (wrong profile; reuse a tab: `tab tN`, `open`, `tab close tN`). Other profile: `google-chrome-stable --profile-directory="Profile N" <url>`, then `tab`.
