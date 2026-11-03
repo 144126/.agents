@@ -9,7 +9,9 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
+import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +26,7 @@ warnings.filterwarnings("ignore")
 np.seterr(all="ignore")
 
 HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
+# journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
@@ -34,6 +37,16 @@ RTDS = "wss://ws-live-data.polymarket.com"
 CB = "https://api.exchange.coinbase.com/products"
 FEE_SRC = "https://docs.polymarket.com/trading/fees"  # fee = C x feeRate x p x (1-p); rate/exponent from market feeSchedule, takers only
 MIN_EDGE = 0.02
+MAX_SPREAD = 0.03
+MAX_SPOT_AGE = 5
+EVENT_PAD = 120
+DECISION_MAX_AGE = 10
+ARB_MAX = 0.99
+CFG = Path(os.environ.get("DELPHI_CONFIG", Path.home() / ".config/delphi"))
+GEO = "https://polymarket.com/api/geoblock"
+CAL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+DIR = Path(__file__).resolve().parent
+LEGS = {"BUY_UP": ["up"], "BUY_DOWN": ["down"], "BUY_BOTH": ["up", "down"]}
 ASSETS = {
     "btc": {"sym": "BTCUSDT", "fut": "BTCUSDT", "cb": "BTC-USD", "pm": "BTC", "rt": "btc/usd"},
     "eth": {"sym": "ETHUSDT", "fut": "ETHUSDT", "cb": "ETH-USD", "pm": "ETH", "rt": "eth/usd"},
@@ -685,11 +698,289 @@ def snap(a):
     L_out.append(f"indicator_values {tot} ({tot // len(tfs)} per TF x {len(tfs)})")
     t_end = time.time()
     L_out.append(f"timing_ms resolve={(t_res - t0) * 1000:.0f} books={(t_books - t_res) * 1000:.0f} total={(t_end - t0) * 1000:.0f}")
+    vals = {iv: {f"{f_}.{nm}": (None if not np.isfinite(arr[-1]) else float(arr[-1])) for f_, nm, arr, ce in F[iv]} for iv in tfs}
+    return {"lines": L_out, "values": vals, "mixed": mixed, "asset": asset, "window": window,
+            "rule": f"twap{L}s" if twap else "point", "slug": slug, "T": T, "E": E, "now": now, "phase": phase,
+            "tau": tau, "K": K, "k_src": k_src, "S": S, "s_src": s_src, "pf": pf, "proxy": proxy,
+            "spot_age": now - B["1s"]["T"][-1] - 1, "books": bks, "fs": fs}
+
+
+def cmd_snap(a):
+    r = snap(a)
     if a.json:
-        vals = {iv: {f"{f_}.{nm}": (None if not np.isfinite(arr[-1]) else float(arr[-1])) for f_, nm, arr, ce in F[iv]} for iv in tfs}
-        print(json.dumps({"lines": L_out, "values": vals, "mixed": mixed}))
+        print(json.dumps({"lines": r["lines"], "values": r["values"], "mixed": r["mixed"]}))
     else:
-        print("\n".join(L_out))
+        print("\n".join(r["lines"]))
+
+
+def limits():
+    f = CFG / "limits.json"
+    d = json.loads(f.read_text()) if f.exists() else {}
+    return {"shares": max(5, d.get("shares", 5)), "daily_loss_usd": d.get("daily_loss_usd", 5),
+            "max_trade_usd": d.get("max_trade_usd", 3), "min_secs_left": d.get("min_secs_left", 20)}
+
+
+def calendar():
+    f = HOME / f"calendar-{dt.datetime.now(dt.UTC):%Y-%m-%d}.json"
+    if not f.exists():
+        ev = jget(CAL, 10)
+        if ev is None:
+            return None
+        HOME.mkdir(parents=True, exist_ok=True)
+        for old in HOME.glob("calendar-*.json"):
+            old.unlink()
+        f.write_text(json.dumps(ev))
+    return json.loads(f.read_text())
+
+
+def event_near(T, E):
+    ev = calendar()
+    if ev is None:
+        return True
+    return any(x.get("country") == "USD" and x.get("impact") == "High"
+               and T - EVENT_PAD <= dt.datetime.fromisoformat(x["date"]).timestamp() <= E + EVENT_PAD for x in ev)
+
+
+def leg(bd, ad, p, fs):
+    ask = ad[0][0]
+    fe = fee(ask, fs)
+    return {"bid": bd[0][0], "ask": ask, "fee": fe, "edge": None if p is None else round(p - ask - fe, 5)}
+
+
+def verdict(r):
+    lim = limits()
+    fs, pf, bks = r["fs"], r["pf"], r["books"]
+    two = len(bks) == 2 and all(b and s for b, s in bks)
+    L = {"up": None, "down": None}
+    if two:
+        (ub, ua), (db, da) = bks
+        L["up"] = leg(ub, ua, pf, fs)
+        L["down"] = leg(db, da, None if pf is None else 1 - pf, fs)
+    up, dn = L["up"], L["down"]
+    thin = not two or max(up["ask"] - up["bid"], dn["ask"] - dn["bid"]) > MAX_SPREAD
+    stale = r["spot_age"] >= MAX_SPOT_AGE
+    late = r["tau"] < lim["min_secs_left"]
+    ev = event_near(r["T"], r["E"])
+    checks = [("not_live", r["phase"] != "live"), ("stale", stale), ("thin_book", thin), ("mixed", r["mixed"]),
+              ("proxy", r["proxy"]), ("event", ev), ("late", late)]
+    reasons = [c for c, bad in checks if bad]
+    arb = two and up["ask"] + dn["ask"] + up["fee"] + dn["fee"] <= ARB_MAX
+    action = "NO_BET"
+    if not reasons:
+        if arb:
+            action = "BUY_BOTH"
+        elif max(up["edge"], dn["edge"]) >= MIN_EDGE:
+            action = "BUY_UP" if up["edge"] >= dn["edge"] else "BUY_DOWN"
+        else:
+            reasons = ["no_edge"]
+    legs = LEGS.get(action, [])
+    shares = lim["shares"] if legs else 0
+    cost = round(sum((shares * (L[s]["ask"] + L[s]["fee"]) for s in legs), 0.0), 4)
+    lp = L[legs[0]]["ask"] if len(legs) == 1 else None
+    return {"slug": r["slug"], "asset": r["asset"], "window": r["window"], "phase": r["phase"],
+            "secs_left": round(r["tau"], 1), "rule": r["rule"],
+            "k": None if r["K"] is None else float(r["K"]), "k_src": r["k_src"],
+            "s": float(r["S"]), "s_src": r["s_src"],
+            "p_fair": pf if r["phase"] == "live" else None, "up": up, "down": dn,
+            "action": action, "limit_price": lp, "shares": shares, "cost_usd": cost, "reasons": reasons,
+            "flags": {"proxy_zone": bool(r["proxy"]), "mixed": bool(r["mixed"]), "stale": bool(stale),
+                      "event": bool(ev), "thin_book": bool(thin), "late": bool(late), "arb": bool(arb)},
+            "ts": r["now"]}
+
+
+def nobet(a, why):
+    return {"slug": None, "asset": a.asset, "window": a.window, "phase": None, "secs_left": None, "rule": None,
+            "k": None, "k_src": None, "s": None, "s_src": None, "p_fair": None, "up": None, "down": None,
+            "action": "NO_BET", "limit_price": None, "shares": 0, "cost_usd": 0.0, "reasons": [why],
+            "flags": {}, "ts": time.time()}
+
+
+def cmd_decide(a):
+    try:
+        out = verdict(snap(a))
+    except SystemExit as e:
+        print(e, file=sys.stderr)
+        out = nobet(a, "no_window")
+    except Exception as e:
+        print(repr(e), file=sys.stderr)
+        out = nobet(a, "engine_error")
+    print(json.dumps(out))
+
+
+def same_call(g, d):
+    try:
+        if g["action"] != d["action"] or g["slug"] != d["slug"]:
+            return False
+        if (g["limit_price"] is None) != (d["limit_price"] is None):
+            return False
+        if d["limit_price"] is not None and abs(float(g["limit_price"]) - d["limit_price"]) > 1e-9:
+            return False
+        return abs(float(g["shares"]) - d["shares"]) <= 1e-9
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def llm_reasons(d, path):
+    p = Path(path) if path else None
+    raw = p.read_text().strip() if p and p.is_file() else ""
+    if not raw:
+        return [] if os.environ.get("DELPHI_LLM_OPTIONAL") == "1" else ["llm_unavailable"]
+    lines = [x for x in raw.splitlines() if x.strip().startswith("{")]
+    try:
+        g = json.loads(lines[-1])
+    except (ValueError, IndexError):
+        return ["llm_bad"]
+    return [] if same_call(g, d) else ["llm_mismatch"]
+
+
+def fresh_ok(d1, d2):
+    if d2["action"] != d1["action"] or d2["slug"] != d1["slug"]:
+        return False
+    return all(d2[s]["ask"] <= d1[s]["ask"] + 1e-9 for s in LEGS[d1["action"]])
+
+
+def cmd_judge(a):
+    d = json.loads(Path(a.decision).read_text())
+    if d["action"] != "NO_BET":
+        why = llm_reasons(d, a.llm)
+        f = None
+        if not why:
+            try:
+                f = json.loads(Path(a.fresh).read_text())
+            except (OSError, ValueError):
+                f = None
+            if f is None or not fresh_ok(d, f):
+                why = ["moved"]
+        if why:
+            d = {**d, "action": "NO_BET", "limit_price": None, "shares": 0, "cost_usd": 0.0,
+                 "reasons": d["reasons"] + why}
+        else:
+            d = f
+    print(json.dumps(d))
+
+
+def rows():
+    return [json.loads(x) for x in JOURNAL.read_text().splitlines() if x.strip()] if JOURNAL.exists() else []
+
+
+def write(recs):
+    HOME.mkdir(parents=True, exist_ok=True)
+    with JOURNAL.open("a") as fh:
+        for r in recs:
+            fh.write(json.dumps(r) + "\n")
+
+
+def traded(slug):
+    return any("v" in r and r["s"] == slug for r in rows())
+
+
+def leg_pnl(r, m):
+    op = [float(x) for x in json.loads(m["outcomePrices"])]
+    if not m.get("closed") or op[0] not in (0.0, 1.0):
+        return None, None
+    win = (op[0] == 1.0) == (r["d"] == "up")
+    x, q = r["x"], r.get("q", 1)
+    return q * ((1 - x) if win else -x) - q * fee(x, m.get("feeSchedule")), win
+
+
+def day_loss(now):
+    loss = 0.0
+    for r in rows():
+        if r.get("v") != "l" or r["t"] < now - now % 86400:
+            continue
+        m = market(r["s"]) or {}
+        pnl = leg_pnl(r, m)[0] if m else None
+        if pnl is None:
+            loss += r["q"] * (r["x"] + fee(r["x"], m.get("feeSchedule")))
+        else:
+            loss += max(0.0, -pnl)
+    return loss
+
+
+def live_env():
+    f = CFG / "live.env"
+    if not f.exists() or stat.S_IMODE(f.stat().st_mode) != 0o600:
+        return None
+    env = dict(x.split("=", 1) for x in f.read_text().splitlines() if "=" in x)
+    keys = ["POLYMARKET_PRIVATE_KEY", "POLYMARKET_WALLET", "POLYMARKET_RELAYER_KEY", "POLYMARKET_RELAYER_ADDRESS"]
+    return env if all(env.get(k) for k in keys) else None
+
+
+def geo_blocked():
+    t = os.environ.get("DELPHI_GEOBLOCK_TEST")
+    if t:
+        return t != "open"
+    g = jget(GEO)
+    return g is None or g.get("blocked") is not False
+
+
+def emit(status, msg, **kw):
+    print(json.dumps({"status": status, "msg": msg, **kw}))
+
+
+def refuse(msg):
+    emit("refused", msg)
+    raise SystemExit(2)
+
+
+def record(d, v, s, x, o, u):
+    return {"t": int(time.time()), "s": d["slug"], "v": v, "p": d["p_fair"], "d": s, "a": d["action"],
+            "x": x, "q": d["shares"], "o": o, "u": u}
+
+
+def paper(d):
+    recs = [record(d, "p", s, d[s]["ask"], None, "paper") for s in LEGS[d["action"]]]
+    write(recs)
+    emit("paper", d["action"], legs=len(recs))
+
+
+def live(d, env):
+    tok = json.loads(market(d["slug"])["clobTokenIds"])
+    legs = [{"d": s, "tok": tok[0 if s == "up" else 1], "x": d[s]["ask"], "q": d["shares"]} for s in LEGS[d["action"]]]
+    end = int(d["slug"].rsplit("-", 1)[1]) + WINDOWS[d["window"]]
+    p = subprocess.run(["uv", "run", "--script", str(DIR / "trade_live.py")],
+                       input=json.dumps({"end": end, "legs": legs}), capture_output=True, text=True,
+                       env={**os.environ, **env}, timeout=60)
+    try:
+        res = json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        res = [{"d": g["d"], "o": None, "u": "error"} for g in legs]
+    write([record(d, "l", g["d"], g["x"], o["o"], o["u"]) for g, o in zip(legs, res)])
+    emit("live", d["action"], orders=res)
+
+
+def day_loss_gate(lim):
+    loss = day_loss(time.time())
+    if loss >= lim["daily_loss_usd"]:
+        refuse(f"daily loss {loss:.2f} >= DAILY_LOSS_USD {lim['daily_loss_usd']}")
+
+
+def cmd_trade(a):
+    d = json.loads(sys.stdin.read() if a.decision == "-" else Path(a.decision).read_text())
+    if d["action"] == "NO_BET":
+        return emit("no_trade", "NO_BET")
+    if traded(d["slug"]):
+        refuse("slug already traded")
+    if not a.live:
+        return paper(d)
+    lim = limits()
+    if os.environ.get("DELPHI_LIVE") != "1":
+        refuse("DELPHI_LIVE=1 not set")
+    if (CFG / "KILL").exists():
+        refuse("KILL file present")
+    env = live_env()
+    if env is None:
+        refuse("live.env missing, not mode 600, or missing keys")
+    if d["action"] == "BUY_BOTH":
+        refuse("both_legs_paper_only")
+    if time.time() - d["ts"] >= DECISION_MAX_AGE:
+        refuse("decision older than 10 s")
+    if geo_blocked():
+        refuse("geoblock: blocked or unknown")
+    day_loss_gate(lim)
+    if d["cost_usd"] > lim["max_trade_usd"]:
+        refuse(f"cost {d['cost_usd']} > MAX_TRADE_USD {lim['max_trade_usd']}")
+    live(d, env)
 
 
 def history(ex, asset, iv, days, t_run):
@@ -906,14 +1197,13 @@ def log(a):
 
 
 def score(a):
-    if not JOURNAL.exists():
-        raise SystemExit(f"no journal at {JOURNAL}")
-    rows = [json.loads(x) for x in JOURNAL.read_text().splitlines() if x.strip()]
-    slugs = sorted({r["s"] for r in rows})
+    rs = rows()
+    slugs = sorted({r["s"] for r in rs})
     mk = dict(zip(slugs, ThreadPoolExecutor(12).map(market, slugs)))
-    n = bets = hits = nm = 0
-    ba = bm = ll = pnl = 0.0
-    for r in rows:
+    n = nm = 0
+    ba = bm = ll = 0.0
+    modes = {}
+    for r in rs:
         m = mk.get(r["s"])
         if not m or not m.get("closed"):
             continue
@@ -921,26 +1211,30 @@ def score(a):
         if op[0] not in (0.0, 1.0):
             continue
         y = int(op[0] == 1.0)
-        n += 1
-        p = min(max(r["p"], 1e-6), 1 - 1e-6)
-        ba += (r["p"] - y) ** 2
-        ll += -(y * math.log(p) + (1 - y) * math.log(1 - p))
-        if r.get("m") is not None:
-            nm += 1
-            bm += (r["m"] - y) ** 2
+        if "v" not in r:
+            n += 1
+            p = min(max(r["p"], 1e-6), 1 - 1e-6)
+            ba += (r["p"] - y) ** 2
+            ll += -(y * math.log(p) + (1 - y) * math.log(1 - p))
+            if r.get("m") is not None:
+                nm += 1
+                bm += (r["m"] - y) ** 2
         if r["d"] in ("up", "down") and r.get("x") is not None:
-            bets += 1
-            win = (y == 1) if r["d"] == "up" else (y == 0)
-            hits += win
-            x = r["x"]
-            gross = (1 - x) if win else -x
-            pnl += gross - fee(x, m.get("feeSchedule"))
-    if n == 0:
+            pnl, win = leg_pnl(r, m)
+            s = modes.setdefault(r.get("v", "log"), [0, 0, 0.0, 0.0])
+            s[0] += 1
+            s[1] += win
+            s[2] += pnl
+            s[3] += r["x"] * r.get("q", 1)
+    if n:
+        print(f"resolved_log {n} brier_agent {ba / n:.4f} brier_mkt {bm / nm if nm else float('nan'):.4f} "
+              f"(n_mkt={nm}) logloss_agent {ll / n:.4f}")
+    names = {"p": "paper", "l": "live", "log": "log"}
+    for k, (legs, hits, pnl, staked) in sorted(modes.items()):
+        print(f"{names[k]} legs {legs} hit_rate {hits / legs:.3f} staked_usd {staked:.2f} "
+              f"pnl_usd {pnl:+.4f} pnl_per_leg {pnl / legs:+.4f}")
+    if not n and not modes:
         print("resolved 0")
-        return
-    print(f"resolved {n} bets {bets} hit_rate {hits / bets if bets else float('nan'):.3f} "
-          f"brier_agent {ba / n:.4f} brier_mkt {bm / nm if nm else float('nan'):.4f} (n_mkt={nm}) "
-          f"logloss_agent {ll / n:.4f} pnl_per_share_total {pnl:+.4f} pnl_per_bet {pnl / bets if bets else float('nan'):+.4f}")
 
 
 def main():
@@ -963,8 +1257,20 @@ def main():
     l_.add_argument("--price", type=float)
     l_.add_argument("--note", default="")
     sub.add_parser("score")
+    d_ = sub.add_parser("decide")
+    d_.add_argument("target", nargs="?", default="now")
+    d_.add_argument("--asset", required=True, choices=list(ASSETS))
+    d_.add_argument("--window", required=True, choices=list(WINDOWS))
+    j_ = sub.add_parser("judge")
+    j_.add_argument("--decision", required=True)
+    j_.add_argument("--llm", default="")
+    j_.add_argument("--fresh", default="")
+    t_ = sub.add_parser("trade")
+    t_.add_argument("--decision", required=True)
+    t_.add_argument("--live", action="store_true")
     a = p.parse_args()
-    {"snap": snap, "edge": edge, "markets": markets, "log": log, "score": score}[a.cmd](a)
+    {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
+     "markets": markets, "log": log, "score": score}[a.cmd](a)
 
 
 if __name__ == "__main__":

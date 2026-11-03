@@ -1,0 +1,5 @@
+# delphi checkpoints. Install with: crontab ~/.agents/skills/delphi/cron.txt (not installed yet)
+* * * * * sleep 20; $HOME/.agents/skills/delphi/run_window.sh xau 15m
+# btc 5m off until in-window btc is validated
+#* * * * * $HOME/.agents/skills/delphi/run_window.sh btc 5m
+#* * * * * sleep 30; $HOME/.agents/skills/delphi/run_window.sh btc 5m
