@@ -1,0 +1,81 @@
+---
+name: delphi
+description: Call Polymarket up/down markets (btc/eth/sol/xrp 5m-4h, gold xau 15m/1h) as UP, DOWN or NO BET. Produces a live report with 540 indicators on 6 timeframes, the Chainlink price to beat, TWAP or point fair value, the order book, taker fees, edge and quarter-kelly, plus a journal that scores every call. Use for any polymarket.com/event/*-updown-* link, or "call the next btc 5m / gold 15m window".
+---
+
+# delphi
+
+The engine and playbook for Polymarket up/down windows. The `delphi` agent (`~/.claude/agents/delphi.md`, opus 5.5, max effort) runs on it.
+
+## run
+```
+uv run --script ~/.agents/skills/delphi/delphi.py markets          # open windows to choose from
+uv run --script ~/.agents/skills/delphi/delphi.py snap <url|slug> [--json]
+uv run --script ~/.agents/skills/delphi/delphi.py snap now|next --asset btc|eth|sol|xrp|xau --window 5m|15m|1h|4h
+uv run --script ~/.agents/skills/delphi/delphi.py edge --asset btc --window 5m --days 30
+uv run --script ~/.agents/skills/delphi/delphi.py log --slug <slug> --p 0.55 --side up|down|none --price 0.50 --note "..."
+uv run --script ~/.agents/skills/delphi/delphi.py score
+```
+- `edge` is the validation run and writes `edges-<asset>-<window>.json`. Re-run it daily for each market you trade; `snap` reads it.
+- `score` grades the journal against the market.
+- data lives in `~/.local/share/delphi/` (journal.jsonl, edges-*.json); `DELPHI_HOME` overrides it.
+- agent: `claude --agent delphi "next btc 5m"`, or in any session: "use delphi on <url>".
+- speed: `snap` and `markets` take ~2.5 s. `edge` takes ~65 s, because it pulls ~750 real resolutions from gamma.
+
+## market rules (verified 2026-11-03)
+- the slug is `<asset>-updown-<window>-<start_unix>`, and the number is the window start.
+  - windows are not contiguous in Gamma, so probe; never assume the next one exists.
+  - each market's rule is read from Gamma (`cryptoMarketConfig.twapEnabled`/`twapLookbackSeconds`, with the description as fallback).
+- btc 5m: Up iff the Chainlink BTC/USD TWAP60 at window end >= the price at start; ties go to Up.
+  - K = Polymarket crypto-price `openPrice`, S = RTDS chainlink. Both are exact.
+- xau 15m: Up iff the Chainlink XAU/USD forex-stream price at end >= the price at start (point price, no TWAP).
+  - Chainlink gold isn't readable (rtds xau/usd is empty, crypto-price XAU returns "no report", and the page has no price to beat).
+  - so K = the open of Binance's XAUUSDT index-price 1m bar at window start, and S = the live `premiumIndex` indexPrice.
+  - against 250 real resolutions this agrees 98.8% of the time. sigma_b = 1.9 bps.
+  - flip rate by |end distance|: 8% at 0-1 bps, <= 2% beyond 1 bps.
+  - other proxies: perp 97.6%, paxg 94.8%.
+  - gold has market hours: windows go missing around the weekend and the daily break.
+- calibration: the fitted sigma multiplier m is 0.905 for btc (ece 0.032 -> 0.023) and 0.938 for xau (0.040 -> 0.035). `sigma_b` is added to the fair-value variance.
+- `PROXY ZONE` (|ln S/K| < 2 sigma_b: btc < 7.9 bps, xau < 3.8 bps) forces NO BET.
+- open issue (btc):
+  - the best proxy (binance 1s TWAP60) agrees with resolutions only 89.5% of the time (sigma_b 3.9 bps).
+  - the start reference is unverified: is K the crypto-price openPrice, or the TWAP60 at window start? polymarket's own open/close agree only 85.3%.
+  - in the last 60 s, the realized part of the TWAP uses only the few rtds ticks from a 1.5 s connection.
+  - until this is fixed, treat btc in-window edges under ~10 bps as noise.
+- fees (`crypto_fees_v2`): taker fee = shares x 0.07 x p x (1-p), rounded to 5 dp, so at most 1.75c/share at p = 0.50.
+  - makers pay 0 and get a 20% rebate.
+  - book tick 0.01, minimum 5 shares.
+
+## what the numbers say (`edge`, 30 days, 2026-11-03)
+- btc 5m, pre-window:
+  - 432 tests gave 37 walk-forward survivors, vs ~22 expected by luck, and 0 after bonferroni.
+  - best out-of-sample ~0.53. the l2 ensemble scores acc 0.506 and brier 0.2565, worse than the 0.25 coin.
+  - no robust pre-window edge.
+- btc 5m, in-window: sign(S-K) is right 0.67 at 60 s, 0.75 at 120 s, 0.83 at 180 s, 0.93 at 240 s.
+- xau 15m: ensemble brier 0.250 (no edge). in-window sign is right 0.67 at 180 s and 0.87 at 720 s.
+- so the only real edge is in-window fair value against a mispriced book, after fees. NO BET is the default.
+
+## facts kept from the other skills
+- polymarket-api: ids run slug -> event -> market (condition_id) -> clobTokenIds (Up, Down); the book is CLOB `/book?token_id=`. its old "zero taker fees" line was wrong for crypto and is fixed.
+- prediction-market-strategy: fee-aware selection; quarter-kelly with a hard cap; the favourite-longshot bias (cheap tails overpriced) is the durable catalogued edge.
+- prediction-market-live-ops: a backtest's EV on passive fills is only an upper bound; maker strategies validate only on fill-conditioned live results. pre-declare a kill rule, e.g. stop after 100 logged calls if the agent's brier >= the market's.
+- walk-forward-validation: never k-fold a time series; purge or embargo overlapping windows; judge out of sample only.
+- market-microstructure-traditional: spread = adverse selection + inventory + costs. resting orders fill most often when they're wrong.
+- dropped as irrelevant here:
+  - kalshi-*
+  - llmquant-* (they need LLMQuant Data)
+  - wind-find (china a-shares)
+  - market-microstructure (solana dex)
+  - vectorbt, ta-lib, ohlcv-processing, strategy-framework (the engine covers them)
+
+## book
+`murphy.md`: John Murphy, *Technical Analysis of the Financial Markets*, read in full and distilled. The applied section comes first, then chapter notes with pdf page numbers for pulling the source text.
+
+## traps
+- polymarket hosts need curl (python urllib gets blocked); data.chain.link is behind a vercel wall for curl.
+- rtds sends an empty first frame; skip it or the stream aborts.
+- gamma `orderPriceMinTickSize` says 0.001, but the live book steps by 0.01.
+- gamma `fee` can be null (xau); use `feeSchedule`.
+- binance usd-m has no 1s klines; gold 1s comes from paxg spot. `openInterestHist` can be empty for the gold perp, which prints NA.
+- a thin book reads 0.01/0.99 (spread 0.98). that is no market.
+- ta-lib 0.8.3 has a cp314 wheel; the first run adds ~100 MB to the uv cache.
