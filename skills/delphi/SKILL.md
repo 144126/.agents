@@ -78,4 +78,8 @@ uv run --script ~/.agents/skills/delphi/delphi.py score
 - gamma `fee` can be null (xau); use `feeSchedule`.
 - binance usd-m has no 1s klines; gold 1s comes from paxg spot. `openInterestHist` can be empty for the gold perp, which prints NA.
 - a thin book reads 0.01/0.99 (spread 0.98). that is no market.
+- a failed feed used to mix the strike's source with the live price's source. in the fault tests this produced fake +30-point edges.
+  - snap now tags each price's source family and prints `MIXED SOURCES ...: no bet` on any mismatch.
+  - test it with `DELPHI_FAIL=rtds|index`.
+  - if rtds ever starts returning xau ticks, K must move to chainlink too, or every gold call will read MIXED.
 - ta-lib 0.8.3 has a cp314 wheel; the first run adds ~100 MB to the uv cache.

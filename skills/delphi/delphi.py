@@ -432,7 +432,7 @@ def rtds(sym, sec):
         except Exception:
             pass
 
-    asyncio.run(run())
+    if os.environ.get("DELPHI_FAIL") != "rtds": asyncio.run(run())
     return sorted(out)
 
 
@@ -485,19 +485,21 @@ def snap(a):
     s_bin = c1[-1]
     K = px.get("openPrice")
     k_src = "polymarket crypto-price openPrice"
-    ix = ix_f.result() if ix_f else None
+    k_fam = "chainlink"
+    ix = ix_f.result() if ix_f and os.environ.get("DELPHI_FAIL") != "index" else None
     if ix:
-        K, k_src = float(ix[0][1]), "binance xau index open at window start (indexPriceKlines)"
+        K, k_src, k_fam = float(ix[0][1]), "binance xau index open at window start (indexPriceKlines)", "binance-index"
     elif K is None and now >= T:
         K = c1[np.searchsorted(B["1s"]["T"], T - 1)]
         k_src = "proxy: spot 1s close at window start (no Polymarket/Chainlink reference)"
+        k_fam = "binance-spot"
     ch = rt[-1] if rt else None
     if ch:
-        S, s_src = ch[1], "chainlink rtds"
+        S, s_src, s_fam = ch[1], "chainlink rtds", "chainlink"
     elif asset == "xau" and prem.get("indexPrice"):
-        S, s_src = float(prem["indexPrice"]), "binance xau index (premiumIndex indexPrice)"
+        S, s_src, s_fam = float(prem["indexPrice"]), "binance xau index (premiumIndex indexPrice)", "binance-index"
     else:
-        S, s_src = s_bin, "proxy: spot"
+        S, s_src, s_fam = s_bin, "proxy: spot", "binance-spot"
     r1 = np.diff(np.log(c1))
     s15 = np.sqrt(np.mean(r1[-900:] ** 2))
     s5 = np.sqrt(np.mean(r1[-300:] ** 2))
@@ -514,6 +516,7 @@ def snap(a):
     sd = mm * s1m * S
     obs =[v for t_, v in rt if E - L < t_ / 1000 <= now]
     obs_m = float(np.mean(obs)) if obs else S
+    mixed = phase == "live" and (K is None or k_fam != s_fam or (tau < L and ("chainlink" if obs else None) != k_fam))
     pf = None
     p_g = p_t = z_tw = z_nv = None
     if phase == "live" and K is not None:
@@ -559,6 +562,7 @@ def snap(a):
         f"S-K {S - K:+.4f} ({(S / K - 1) * 1e4:+.1f} bps)" if K is not None else "S-K n/a",
         f"sigma_mult_m {mm:.4f} sigma_b_bps {bb * 1e4:.3f}",
         "PROXY ZONE: market knows more, no bet" if proxy else "",
+        f"MIXED SOURCES k={k_fam} s={s_fam}: no bet" if mixed else "",
         f"basis_xau_spot_vs_perp_bps {basis:+.2f} (PAXGUSDT spot vs XAUUSDT perp, 1m close; no Chainlink/Polymarket XAU reference)" if basis is not None else "",
         f"sigma_per_sqrt_s 1s15m={s15:.3e} 1s5m={s5:.3e} ewma1s={sew:.3e} 1m1h={s1m:.3e} gk1m1h={gk1m:.3e} primary=1s15m",
         f"realized_partial_{'twap' if L > 1 else 'price'} {obs_m:.4f} dist_to_K {obs_m - K:+.4f}" if K is not None and phase == "live" and tau < L else "realized_partial n/a",
@@ -589,7 +593,7 @@ def snap(a):
                 L_out.append(f"edge_DOWN fair={1 - pf:.4f} ask={dn_a} fee={fee(dn_a, fs)} breakeven={a_dn:.4f} edge={e_dn:+.4f}")
                 e_best, act, p_best, a_best = max([(e_up, "BUY UP", pf, a_up), (e_dn, "BUY DOWN", 1 - pf, a_dn)])
                 kel = 0.25 * max(0.0, (p_best - a_best) / (1 - a_best))
-                action = "NO BET" if proxy or e_best <= MIN_EDGE else act
+                action = "NO BET" if mixed or proxy or e_best <= MIN_EDGE else act
                 L_out.append(f"action {action} best_edge={e_best:+.4f} quarter_kelly={kel:.4f} min_edge={MIN_EDGE}")
 
     bids = [(float(p_), float(q)) for p_, q in dep.get("bids", [])]
@@ -681,7 +685,7 @@ def snap(a):
     L_out.append(f"timing_ms resolve={(t_res - t0) * 1000:.0f} books={(t_books - t_res) * 1000:.0f} total={(t_end - t0) * 1000:.0f}")
     if a.json:
         vals = {iv: {f"{f_}.{nm}": (None if not np.isfinite(arr[-1]) else float(arr[-1])) for f_, nm, arr, ce in F[iv]} for iv in tfs}
-        print(json.dumps({"lines": L_out, "values": vals}))
+        print(json.dumps({"lines": L_out, "values": vals, "mixed": mixed}))
     else:
         print("\n".join(L_out))
 
