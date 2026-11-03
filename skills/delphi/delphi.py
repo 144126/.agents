@@ -33,7 +33,7 @@ FAPI = "https://fapi.binance.com"
 RTDS = "wss://ws-live-data.polymarket.com"
 CB = "https://api.exchange.coinbase.com/products"
 FEE_SRC = "https://docs.polymarket.com/trading/fees"  # fee = C x feeRate x p x (1-p); rate/exponent from market feeSchedule, takers only
-MIN_EDGE = 0.01
+MIN_EDGE = 0.02
 ASSETS = {
     "btc": {"sym": "BTCUSDT", "fut": "BTCUSDT", "cb": "BTC-USD", "pm": "BTC", "rt": "btc/usd"},
     "eth": {"sym": "ETHUSDT", "fut": "ETHUSDT", "cb": "ETH-USD", "pm": "ETH", "rt": "eth/usd"},
@@ -53,6 +53,7 @@ PM_VARIANT = {"5m": "fiveminute", "15m": "fifteen"}
 FAMS = ["trend", "mom", "vol", "volat", "reg", "struct"]
 RE_SLUG = re.compile(r"([a-z]+)-updown-(\d+[mh])-(\d+)")
 SB_GRID = np.logspace(-5, -2, 300)
+MU_GRID = np.linspace(-5e-4, 5e-4, 41)
 
 
 def iso(t):
@@ -511,8 +512,8 @@ def snap(a):
     gk1m = np.sqrt(np.mean(0.5 * np.log(b1["h"] / b1["l"]) ** 2 - (2 * np.log(2) - 1) * np.log(b1["c"] / b1["o"]) ** 2)) / math.sqrt(60)
     ef = HOME / f"edges-{asset}-{window}.json"
     ed = json.loads(ef.read_text()) if ef.exists() else {}
-    mm, bb = ed.get("m", 1.0), ed.get("b", 0.0)
-    proxy = K is not None and phase == "live" and abs(math.log(S / K)) < 2 * bb
+    mm, bb, mb = ed.get("m", 1.0), ed.get("b", 0.0), ed.get("o", 0.0)
+    proxy = K is not None and phase == "live" and abs(math.log(S / K) - mb) < 2 * bb
     sd = mm * s1m * S
     obs =[v for t_, v in rt if E - L < t_ / 1000 <= now]
     obs_m = float(np.mean(obs)) if obs else S
@@ -527,16 +528,17 @@ def snap(a):
             mean = ((L - tau) * obs_m + tau * S) / L
             var = sd * sd * tau ** 3 / (3 * L * L)
         var += (S * bb) ** 2
-        z_tw = (mean - K) / math.sqrt(var)
+        Ke = K * math.exp(mb)
+        z_tw = (mean - Ke) / math.sqrt(var)
         p_g = float(Phi(z_tw))
         n = int(tau)
         eps = rng.standard_t(4, size=(5000, n)) * math.sqrt(0.5)
         path = S + sd * np.cumsum(eps, axis=1)
         tw = path[:, n - L:].mean(1) if n >= L else ((L - n) * obs_m + path.sum(1)) / L
         tw = tw + S * bb * rng.standard_normal(5000)
-        p_t = float(np.mean(tw >= K))
+        p_t = float(np.mean(tw >= Ke))
         pf = p_t
-        z_nv = math.log(S / K) / math.sqrt((mm * s1m) ** 2 * tau + bb * bb)
+        z_nv = (math.log(S / K) - mb) / math.sqrt((mm * s1m) ** 2 * tau + bb * bb)
     elif phase == "pre":
         pf = 0.5
 
@@ -560,7 +562,7 @@ def snap(a):
         f"K price_to_beat {K} src={k_src if K is not None else 'pending'}",
         f"S {S:.4f} src={s_src} spot_1s {s_bin:.4f} diff {S - s_bin:+.4f}",
         f"S-K {S - K:+.4f} ({(S / K - 1) * 1e4:+.1f} bps)" if K is not None else "S-K n/a",
-        f"sigma_mult_m {mm:.4f} sigma_b_bps {bb * 1e4:.3f}",
+        f"sigma_mult_m {mm:.4f} sigma_b_bps {bb * 1e4:.3f} mu_b_bps {mb * 1e4:+.3f}",
         "PROXY ZONE: market knows more, no bet" if proxy else "",
         f"MIXED SOURCES k={k_fam} s={s_fam}: no bet" if mixed else "",
         f"basis_xau_spot_vs_perp_bps {basis:+.2f} (PAXGUSDT spot vs XAUUSDT perp, 1m close; no Chainlink/Polymarket XAU reference)" if basis is not None else "",
@@ -824,17 +826,18 @@ def edge(a):
     ok_r = np.isfinite(dr)
     dr, yr = dr[ok_r], yr[ok_r]
 
-    def pb(s):
-        return np.clip(Phi(dr / s), 1e-12, 1 - 1e-12)
-    sb = float(SB_GRID[np.argmax([np.sum(yr * np.log(pb(s)) + (1 - yr) * np.log(1 - pb(s))) for s in SB_GRID])])
+    def ll(m_, s_):
+        p_ = np.clip(Phi((dr - m_) / s_), 1e-12, 1 - 1e-12)
+        return np.sum(yr * np.log(p_) + (1 - yr) * np.log(1 - p_))
+    mb, sb = max(((m_, s_) for m_ in MU_GRID for s_ in SB_GRID), key=lambda g: ll(*g))
     agree = float(np.mean(Yp[mx] == Yx[mx])) if mx.any() else float("nan")
 
-    # g=generated, w=windows, d=days, e=ensemble+calibration, s=signals (k=tf:indicator, d=trained sign, h=OOS hit, n=OOS n, z=OOS z), m=sigma multiplier, b=sigma_b log units vs real resolutions
+    # g=generated, w=windows, d=days, e=ensemble+calibration, s=signals (k=tf:indicator, d=trained sign, h=OOS hit, n=OOS n, z=OOS z), m=sigma multiplier, b=sigma_b log units vs real resolutions, o=mu_b log offset: P(Up)=Phi((d-o)/b)
     idx = np.argsort(-np.where(surv, z_te, -np.inf))[:30]
     sigs = [{"k": names[i], "d": int(d[i]), "h": round(float(hit_te[i]), 4), "n": int(n_te[i]), "z": round(float(z_te[i]), 3)} for i in idx if surv[i]]
     out = {"g": iso(t_run), "w": W_n, "d": a.days,
            "e": {"acc": round(ens_acc, 4), "br": round(ens_br, 4), "ece": round(float(ece), 4), "ins": ins},
-           "s": sigs, "m": round(m_hat, 4), "b": sb}
+           "s": sigs, "m": round(m_hat, 4), "b": sb, "o": mb}
     HOME.mkdir(parents=True, exist_ok=True)
     ef = HOME / f"edges-{a.asset}-{a.window}.json"
     ef.write_text(json.dumps(out))
@@ -850,7 +853,7 @@ def edge(a):
     L_out.append(f"ensemble_L2 oos_acc {ens_acc:.4f} oos_brier {ens_br:.4f} (baseline 0.25)")
     L_out.append("in-window acc by elapsed: " + " ".join(f"{e}s={ins[e]:.3f}" for e in ins))
     L_out.append(f"phi_calibration test_third ECE m=1 {ece_before:.4f} m={m_hat:.3f} {ece:.4f}")
-    L_out.append(f"sigma_b_bps {sb * 1e4:.3f} from {len(dr)} real resolutions (ref {ref_url.split('?')[1].split('&')[0]} {'1s twap60' if L > 1 else '1m close'})")
+    L_out.append(f"sigma_b_bps {sb * 1e4:.3f} mu_b_bps {mb * 1e4:+.3f} from {len(dr)} real resolutions (ref {ref_url.split('?')[1].split('&')[0]} {'1s twap60' if L > 1 else '1m close'})")
     L_out.append(f"wrote {ef}")
     L_out.append(f"runtime_s {time.time() - t_run:.1f}")
     print("\n".join(L_out))
