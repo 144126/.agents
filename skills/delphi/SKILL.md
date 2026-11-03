@@ -22,6 +22,31 @@ uv run --script ~/.agents/skills/delphi/delphi.py score
 - agent: `claude --agent delphi "next btc 5m"`, or in any session: "use delphi on <url>".
 - speed: `snap` and `markets` take ~2.5 s. `edge` takes ~65 s, because it pulls ~750 real resolutions from gamma.
 
+## unattended loop (pi + deepseek v4.1 flash)
+- `decide --asset A --window W` prints one JSON decision and is the only source of truth.
+  - gates, in order: window live, fresh data with a two-sided book (spread <= 0.03), no mixed sources, not in the proxy zone, no high-impact usd event within the window +-2 min (fails closed if the calendar is down), >= 20 s left.
+  - then BUY_BOTH if both asks + fees <= 0.99 (paper only), else the best side with edge >= 0.02 after fee, else NO_BET. 5 shares.
+- `run_window.sh A W`, from cron (`cron.txt`; gold 15m every minute at :20, btc lines commented out):
+  1. `decide`;
+  2. on a buy, pi runs with no tools and `pi/operator.md`, and must copy the decision exactly;
+  3. `decide` runs again and `judge` requires the same action and slug at an ask no worse;
+  4. `trade` executes.
+  - one line per run goes to `~/.local/share/delphi/runs.log`.
+- `trade` is paper by default: one trade per slug, filled at the ask, journal mode `p`.
+- live needs every gate to pass:
+  - the live switch is on: `DELPHI_LIVE=1` placed before the script path in the cron line (cron doesn't inherit the shell's env);
+  - `~/.config/delphi/live.env` exists with mode 600 and holds POLYMARKET_PRIVATE_KEY, POLYMARKET_WALLET, POLYMARKET_RELAYER_KEY, POLYMARKET_RELAYER_ADDRESS;
+  - there is no `~/.config/delphi/KILL`;
+  - geoblock says not blocked (this laptop: NG, ok);
+  - the decision is < 10 s old;
+  - the slug hasn't traded yet;
+  - `limits.json` allows it (Ed: $3 a trade, $5/day loss stop, 5 shares).
+- BUY_BOTH never goes live.
+- kill switch: `touch ~/.config/delphi/KILL`. grade results with `delphi.py score` (paper and live are scored separately).
+- `trade_live.py` (polymarket-client 0.16.0) has never sent an order.
+  - unverified: the GTD expiration units and the response fields.
+  - the first live order must be supervised by hand before cron goes live.
+
 ## market rules (verified 2026-11-03)
 - the slug is `<asset>-updown-<window>-<start_unix>`, and the number is the window start.
   - windows are not contiguous in Gamma, so probe; never assume the next one exists.
