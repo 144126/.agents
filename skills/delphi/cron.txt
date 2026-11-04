@@ -3,3 +3,5 @@
 # btc 5m off until in-window btc is validated
 #* * * * * $HOME/.agents/skills/delphi/run_window.sh btc 5m
 #* * * * * sleep 30; $HOME/.agents/skills/delphi/run_window.sh btc 5m
+# btc 5m late-favourite paper bot: logs every window to snipe.jsonl; score: delphi.py snipe-score
+3-58/5 * * * * PATH=$HOME/.local/bin:/usr/bin:/bin flock -n $HOME/.local/share/delphi/snipe.lock timeout 280 uv run -q --script $HOME/.agents/skills/delphi/delphi.py snipe >/dev/null 2>>$HOME/.local/share/delphi/snipe.err

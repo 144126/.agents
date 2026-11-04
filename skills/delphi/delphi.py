@@ -28,6 +28,10 @@ np.seterr(all="ignore")
 HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
+# snipe keys: s slug, t decision time, k secs left, a best asks [up, down], d favourite up|down, x avg fill for the stake,
+# q shares, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
+SNIPE = HOME / "snipe.jsonl"
+STOPS = (0.8, 0.7, 0.5, 0.3)
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 PM_PRICE = "https://polymarket.com/api/crypto/crypto-price"
@@ -863,9 +867,9 @@ def rows():
     return [json.loads(x) for x in JOURNAL.read_text().splitlines() if x.strip()] if JOURNAL.exists() else []
 
 
-def write(recs):
+def write(recs, path=JOURNAL):
     HOME.mkdir(parents=True, exist_ok=True)
-    with JOURNAL.open("a") as fh:
+    with path.open("a") as fh:
         for r in recs:
             fh.write(json.dumps(r) + "\n")
 
@@ -1237,6 +1241,80 @@ def score(a):
         print("resolved 0")
 
 
+def walk(levels, q=None, usd=None):
+    got = paid = 0.0
+    for p, sz in levels:
+        take = min(sz, q - got if q else (usd - paid) / p)
+        got += take
+        paid += take * p
+        if got >= (q or math.inf) - 1e-9 or paid >= (usd or math.inf) - 1e-9:
+            return paid / got, got
+    return None, got
+
+
+def snipe(a):
+    W = WINDOWS[a.window]
+    T = int(time.time()) // W * W
+    end = T + W
+    time.sleep(max(0.0, end - a.tau - time.time()))
+    k = end - time.time()
+    if k < a.tau - 5:
+        return emit("late", f"{k:.0f}s left")
+    slug = f"{a.asset}-updown-{a.window}-{T}"
+    mk = market(slug)
+    if not mk:
+        return emit("no_market", slug)
+    tok = json.loads(mk["clobTokenIds"])
+    bk = list(ThreadPoolExecutor(2).map(book, tok))
+    asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
+    i = int(asks[1] > asks[0])
+    x, q = walk(bk[i][1], usd=a.usd)
+    r = {"s": slug, "t": int(time.time()), "k": round(k, 1), "a": asks, "d": ("up", "down")[i],
+         "x": x and round(x, 4), "q": round(q, 4)}
+    if x and q >= float(mk.get("orderMinSize") or 0):
+        lo, c = None, {}
+        while time.time() < end - 1:
+            time.sleep(2)
+            bids = book(tok[i])[0]
+            if not bids:
+                continue
+            lo = min(lo or 1.0, bids[0][0])
+            for s in STOPS:
+                if str(s) not in c and bids[0][0] < s:
+                    c[str(s)] = round(walk(bids, q=q)[0] or 0.0, 4)
+        r |= {"b": lo, "c": c}
+    write([r], SNIPE)
+    emit("paper", slug, **r)
+
+
+def snipe_score(a):
+    rs = [json.loads(x) for x in SNIPE.read_text().splitlines() if x.strip()] if SNIPE.exists() else []
+    rs = [r for r in rs if r.get("x") and "c" in r and a.lo <= r["a"][r["d"] == "down"] < a.hi]
+    mk = dict(zip([r["s"] for r in rs], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs])))
+    done = []
+    for r in rs:
+        m = mk.get(r["s"]) or {}
+        op = json.loads(m.get("outcomePrices") or "[]")
+        if m.get("closed") and op in (["1", "0"], ["0", "1"]):
+            done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
+    if not done:
+        return print(f"resolved 0 of {len(rs)} paper trades in [{a.lo}, {a.hi})")
+    n, wins = len(done), sum(w for _, w, _ in done)
+    cost = [r["q"] * (r["x"] + fee(r["x"], fs)) for r, _, fs in done]
+    hold = [r["q"] * w - c for (r, w, _), c in zip(done, cost)]
+    days = max((done[-1][0]["t"] - done[0][0]["t"]) / 86400, 1 / 288)
+    be = sum(r["x"] + fee(r["x"], fs) for r, _, fs in done) / n
+    print(f"paper trades {n} ({n / days:.0f}/day) wins {wins} ({100 * wins / n:.2f}%) breakeven {100 * be:.2f}% "
+          f"staked ${sum(cost):.2f} pnl ${sum(hold):+.2f} (${sum(hold) / n:+.3f}/trade, ${sum(hold) / days:+.2f}/day)")
+    for s in STOPS:
+        k = str(s)
+        v = [r["q"] * (r["c"][k] - fee(r["c"][k], fs)) - c if k in r["c"] else h
+             for (r, _, fs), c, h in zip(done, cost, hold)]
+        fired = [(r, w) for r, w, _ in done if k in r["c"]]
+        print(f"  cash out below {s}: fired {len(fired)} (would have won {sum(w for _, w in fired)}) "
+              f"pnl ${sum(v):+.2f} vs hold ${sum(hold):+.2f}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="delphi")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1268,9 +1346,17 @@ def main():
     t_ = sub.add_parser("trade")
     t_.add_argument("--decision", required=True)
     t_.add_argument("--live", action="store_true")
+    n_ = sub.add_parser("snipe")
+    n_.add_argument("--asset", default="btc", choices=list(ASSETS))
+    n_.add_argument("--window", default="5m", choices=list(WINDOWS))
+    n_.add_argument("--tau", type=float, default=60)
+    n_.add_argument("--usd", type=float, default=5)
+    m_ = sub.add_parser("snipe-score")
+    m_.add_argument("--lo", type=float, default=0.90)
+    m_.add_argument("--hi", type=float, default=0.99)
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
-     "markets": markets, "log": log, "score": score}[a.cmd](a)
+     "markets": markets, "log": log, "score": score, "snipe": snipe, "snipe-score": snipe_score}[a.cmd](a)
 
 
 if __name__ == "__main__":
