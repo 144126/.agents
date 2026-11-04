@@ -28,7 +28,7 @@ np.seterr(all="ignore")
 HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
-# snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo),
+# snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo, or f < x + fee + mg),
 # q shares, f delphi fair P(d wins) at entry, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
 SNIPE = HOME / "snipe.jsonl"
 STOPS = (0.8, 0.7, 0.5, 0.3)
@@ -1293,7 +1293,9 @@ def snipe(a):
     x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
     r = {"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
          "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
-    if x and q >= float(mk.get("orderMinSize") or 0):
+    if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
+        r["x"] = None
+    if r["x"] and q >= float(mk.get("orderMinSize") or 0):
         lo, c = None, {}
         while time.time() < end - 1:
             time.sleep(2)
@@ -1383,6 +1385,7 @@ def main():
     n_.add_argument("--lo", type=float, default=0.81)
     n_.add_argument("--hi", type=float, default=0.99)
     n_.add_argument("--usd", type=float, default=5)
+    n_.add_argument("--mg", type=float, default=0.02)
     m_ = sub.add_parser("snipe-score")
     m_.add_argument("--lo", type=float, default=0.81)
     m_.add_argument("--mg", type=float, default=0.02)
