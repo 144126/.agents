@@ -29,7 +29,7 @@ HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
 # snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo),
-# q shares, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
+# q shares, f delphi fair P(d wins) at entry, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
 SNIPE = HOME / "snipe.jsonl"
 STOPS = (0.8, 0.7, 0.5, 0.3)
 GAMMA = "https://gamma-api.polymarket.com"
@@ -1252,6 +1252,24 @@ def walk(levels, q=None, usd=None):
     return None, got
 
 
+def p_fav(sym, T, i):
+    k = jget(f"{BIN}/klines?symbol={sym}&interval=1s&startTime={(int(time.time()) - 660) * 1000}&limit=1000") or []
+    lp = {r[0] // 1000: math.log(float(r[4])) for r in k}
+    now = max(lp, default=0)
+    if T not in lp or now - T > 300:
+        return None
+    r = [lp[s + 1] - lp[s] for s in range(now - 600, now) if s in lp and s + 1 in lp]
+    sg, tau, yt = math.sqrt(sum(v * v for v in r) / max(len(r), 1)), T + 300 - now, lp[now] - lp[T]
+    if tau >= 60:
+        mean, var = yt, sg * sg * (tau - 60 + 20.3)
+    else:
+        real = [lp[s] - lp[T] for s in range(T + 241, now + 1) if s in lp]
+        mean = (sum(real) * (60 - tau) / max(len(real), 1) + tau * yt) / 60
+        var = sg * sg * tau * (tau + 1) * (2 * tau + 1) / (6 * 3600)
+    pu = float(Phi(mean / math.sqrt(var))) if var > 0 else float(mean >= 0)
+    return round(pu if i == 0 else 1 - pu, 4)
+
+
 def snipe(a):
     W = WINDOWS[a.window]
     T = int(time.time()) // W * W
@@ -1274,7 +1292,7 @@ def snipe(a):
         time.sleep(1)
     x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
     r = {"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
-         "x": x and round(x, 4), "q": round(q, 4)}
+         "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
     if x and q >= float(mk.get("orderMinSize") or 0):
         lo, c = None, {}
         while time.time() < end - 1:
@@ -1303,12 +1321,20 @@ def snipe_score(a):
             done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
     if not done:
         return print(f"resolved 0 of {len(rs)} paper trades in [{a.lo}, {a.hi})")
+    show("all", done)
+    show(f"delphi filter (fair >= price + fee + {a.mg})",
+         [z for z in done if z[0].get("f") is not None and z[0]["f"] >= z[0]["x"] + fee(z[0]["x"], z[2]) + a.mg])
+
+
+def show(tag, done):
+    if not done:
+        return print(f"{tag}: 0 trades")
     n, wins = len(done), sum(w for _, w, _ in done)
     cost = [r["q"] * (r["x"] + fee(r["x"], fs)) for r, _, fs in done]
     hold = [r["q"] * w - c for (r, w, _), c in zip(done, cost)]
     days = max((done[-1][0]["t"] - done[0][0]["t"]) / 86400, 1 / 288)
     be = sum(r["x"] + fee(r["x"], fs) for r, _, fs in done) / n
-    print(f"paper trades {n} ({n / days:.0f}/day) wins {wins} ({100 * wins / n:.2f}%) breakeven {100 * be:.2f}% "
+    print(f"{tag}: paper trades {n} ({n / days:.0f}/day) wins {wins} ({100 * wins / n:.2f}%) breakeven {100 * be:.2f}% "
           f"staked ${sum(cost):.2f} pnl ${sum(hold):+.2f} (${sum(hold) / n:+.3f}/trade, ${sum(hold) / days:+.2f}/day)")
     for s in STOPS:
         k = str(s)
@@ -1359,6 +1385,7 @@ def main():
     n_.add_argument("--usd", type=float, default=5)
     m_ = sub.add_parser("snipe-score")
     m_.add_argument("--lo", type=float, default=0.81)
+    m_.add_argument("--mg", type=float, default=0.02)
     m_.add_argument("--hi", type=float, default=0.99)
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
