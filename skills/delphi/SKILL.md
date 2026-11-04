@@ -15,8 +15,8 @@ uv run --script ~/.agents/skills/delphi/delphi.py snap now|next --asset btc|eth|
 uv run --script ~/.agents/skills/delphi/delphi.py edge --asset btc --window 5m --days 30
 uv run --script ~/.agents/skills/delphi/delphi.py log --slug <slug> --p 0.55 --side up|down|none --price 0.50 --note "..."
 uv run --script ~/.agents/skills/delphi/delphi.py score
-uv run --script ~/.agents/skills/delphi/delphi.py snipe [--tau 60 --usd 5]   # paper: buy favourite at T-tau, log cash-out stops
-uv run --script ~/.agents/skills/delphi/delphi.py snipe-score [--lo 0.90 --hi 0.99]
+uv run --script ~/.agents/skills/delphi/delphi.py snipe [--tau 90 --lo 0.81 --usd 5]   # paper: buy favourite the first time its ask hits lo with <= tau s left; log cash-out stops
+uv run --script ~/.agents/skills/delphi/delphi.py snipe-score [--lo 0.81 --hi 0.99]
 ```
 - `edge` is the validation run and writes `edges-<asset>-<window>.json`. Re-run it daily for each market you trade; `snap` reads it.
 - `score` grades the journal against the market.

@@ -28,7 +28,7 @@ np.seterr(all="ignore")
 HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
-# snipe keys: s slug, t decision time, k secs left, a best asks [up, down], d favourite up|down, x avg fill for the stake,
+# snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo),
 # q shares, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
 SNIPE = HOME / "snipe.jsonl"
 STOPS = (0.8, 0.7, 0.5, 0.3)
@@ -1265,11 +1265,15 @@ def snipe(a):
     if not mk:
         return emit("no_market", slug)
     tok = json.loads(mk["clobTokenIds"])
-    bk = list(ThreadPoolExecutor(2).map(book, tok))
-    asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
-    i = int(asks[1] > asks[0])
-    x, q = walk(bk[i][1], usd=a.usd)
-    r = {"s": slug, "t": int(time.time()), "k": round(k, 1), "a": asks, "d": ("up", "down")[i],
+    while True:
+        bk = list(ThreadPoolExecutor(2).map(book, tok))
+        asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
+        i = int((bk[1][0] or [(0,)])[0][0] > (bk[0][0] or [(0,)])[0][0])
+        if a.lo <= asks[i] < a.hi or time.time() > end - 3:
+            break
+        time.sleep(1)
+    x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
+    r = {"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
          "x": x and round(x, 4), "q": round(q, 4)}
     if x and q >= float(mk.get("orderMinSize") or 0):
         lo, c = None, {}
@@ -1349,10 +1353,12 @@ def main():
     n_ = sub.add_parser("snipe")
     n_.add_argument("--asset", default="btc", choices=list(ASSETS))
     n_.add_argument("--window", default="5m", choices=list(WINDOWS))
-    n_.add_argument("--tau", type=float, default=60)
+    n_.add_argument("--tau", type=float, default=90)
+    n_.add_argument("--lo", type=float, default=0.81)
+    n_.add_argument("--hi", type=float, default=0.99)
     n_.add_argument("--usd", type=float, default=5)
     m_ = sub.add_parser("snipe-score")
-    m_.add_argument("--lo", type=float, default=0.90)
+    m_.add_argument("--lo", type=float, default=0.81)
     m_.add_argument("--hi", type=float, default=0.99)
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
