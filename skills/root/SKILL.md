@@ -5,7 +5,7 @@ description: Peel any question to its floor - the layer where one more "why" cha
 
 # root
 
-Evidence machinery (search, fetch, pinpoint cites, grades, kill rounds, fallbacks) belongs to the `research` skill. Read it and use it. This skill owns only what research does not: the why-ladder, the floor test, and the rival at every layer.
+Evidence machinery (search, fetch, pinpoint cites, grades, kill rounds, fallbacks) belongs to the `research` skill (`~/.pi/agent/skills/research/SKILL.md`). Read it and use it. This skill owns only what research does not: the why-ladder, the floor test, and the rival at every layer.
 
 Output: `~/search/<2-6 hyphenated words>-root.md`. Scratch: `/tmp/root-<slug>/`.
 
