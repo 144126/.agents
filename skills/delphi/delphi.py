@@ -1274,16 +1274,16 @@ def snipe(a):
     W = WINDOWS[a.window]
     T = int(time.time()) // W * W
     end = T + W
+    live = snipe_arm(a.usd) if (CFG / "LIVE").exists() else None
     time.sleep(max(0.0, end - a.tau - time.time()))
     k = end - time.time()
-    if k < a.tau - 5:
-        return emit("late", f"{k:.0f}s left")
     slug = f"{a.asset}-updown-{a.window}-{T}"
-    mk = market(slug)
+    mk = market(slug) if k >= a.tau - 5 else None
     if not mk:
-        return emit("no_market", slug)
+        if isinstance(live, subprocess.Popen):
+            live.kill()
+        return emit("late" if k < a.tau - 5 else "no_market", slug)
     tok = json.loads(mk["clobTokenIds"])
-    live = snipe_arm(a.usd) if (CFG / "LIVE").exists() else None
     while True:
         bk = list(ThreadPoolExecutor(2).map(book, tok))
         asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
@@ -1293,17 +1293,19 @@ def snipe(a):
         time.sleep(1)
     x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
     r = {"s": slug, "r": f"{a.tau}/{a.lo}/{a.hi}/{a.mg}", "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
-         "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
-    if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
+         "x": x and round(x, 4), "q": round(q, 4), "f": x and a.mg > -1 and p_fav(ASSETS[a.asset]["sym"], T, i) or None}
+    if x and a.mg > -1 and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
         r |= {"x": None, "w": r["x"]}
     if r["x"] and q * r["x"] >= 0.99 and live:
-        r |= snipe_live(live, tok[i], round(min(0.99, asks[i] + 0.02), 2), a.usd)
+        r |= snipe_live(live, tok[i], round(min(0.99, asks[i] + 0.02), 2), a.usd, a.frac)
         live = None
         if r["g"] > 1000 * q:
             r["g"], r["y"] = r["g"] / 1e6, r["y"] / 1e6
         r["x"], r["q"] = (round(r["y"] / r["g"], 4), r["g"]) if r["g"] else (None, 0.0)
     if isinstance(live, subprocess.Popen):
         live.kill()
+    if x and r["f"] is None:
+        r["f"] = p_fav(ASSETS[a.asset]["sym"], T, i)
     write([r], SNIPE)
     emit(("paper", "live")[r.get("v") == "l"], slug, **r)
 
@@ -1317,7 +1319,7 @@ def snipe_day_loss(now):
         m = market(r["s"]) or {}
         op = json.loads(m.get("outcomePrices") or "[]")
         won = m.get("closed") and op in (["1", "0"], ["0", "1"]) and (op[0] == "1") == (r["d"] == "up")
-        loss += 0.0 if won else r["q"] * (r["x"] + fee(r["x"], m.get("feeSchedule")))
+        loss += r["q"] * (r["x"] + fee(r["x"], m.get("feeSchedule"))) - (r["q"] if won else 0.0)
     return loss
 
 
@@ -1332,11 +1334,11 @@ def snipe_arm(usd):
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, **env})
 
 
-def snipe_live(live, tok, m, usd):
+def snipe_live(live, tok, m, usd, frac):
     if isinstance(live, str):
         return {"v": "l", "u": f"refused: {live}", "g": 0.0, "y": 0.0}
     try:
-        out, err = live.communicate(json.dumps({"tok": tok, "usd": usd, "m": m}) + "\n", timeout=20)
+        out, err = live.communicate(json.dumps({"tok": tok, "usd": usd, "m": m, "frac": frac, "cap": limits()["max_trade_usd"]}) + "\n", timeout=20)
         return {"v": "l", **json.loads(out.strip().splitlines()[-1])}
     except (ValueError, IndexError, subprocess.TimeoutExpired) as e:
         live.kill()
@@ -1418,6 +1420,7 @@ def main():
     n_.add_argument("--lo", type=float, default=0.85)
     n_.add_argument("--hi", type=float, default=0.95)
     n_.add_argument("--usd", type=float, default=1)
+    n_.add_argument("--frac", type=float, default=0.05)
     n_.add_argument("--mg", type=float, default=-1)
     sub.add_parser("snipe-score")
     a = p.parse_args()

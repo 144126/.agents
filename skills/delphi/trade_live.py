@@ -107,12 +107,16 @@ def fak():
     e = os.environ
     rk = e.get("POLYMARKET_RELAYER_KEY") and RelayerApiKey(key=e["POLYMARKET_RELAYER_KEY"], address=e["POLYMARKET_RELAYER_ADDRESS"])
     c = SecureClient.create(private_key=e["POLYMARKET_PRIVATE_KEY"], wallet=e["POLYMARKET_WALLET"], api_key=rk or None)
+    bal = int(c.get_balance_allowance(asset_type="COLLATERAL").balance) / 1e6
     line = sys.stdin.readline()
     if not line.strip():
         return
     j = json.loads(line)
     try:
-        r = c.place_market_order(asset_id=j["tok"], side="BUY", amount=str(j["usd"]), max_price=str(j["m"]), order_type="FAK")
+        usd = min(j.get("cap", j["usd"]), max(j["usd"], round(j.get("frac", 0) * bal, 2)), round(bal / 1.02, 2))
+        if usd < 1:
+            return print(json.dumps({"o": None, "u": f"refused: balance ${bal:.2f}", "g": 0.0, "y": 0.0}))
+        r = c.place_market_order(asset_id=j["tok"], side="BUY", amount=str(usd), max_price=str(j["m"]), order_type="FAK")
     except Exception as x:
         return print(json.dumps({"o": None, "u": f"error: {type(x).__name__}: {str(x)[:160]}", "g": 0.0, "y": 0.0}))
     ok = isinstance(r, AcceptedOrder)
