@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +33,8 @@ JOURNAL = HOME / "journal.jsonl"
 # q shares, f delphi fair P(d wins) at entry, v "l" = real order (o id, u status, g shares got, y usd paid), b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
 SNIPE = HOME / "snipe.jsonl"
 STOPS = (0.8, 0.7, 0.5, 0.3)
+# paper-only late rule (r "t"): last 60 s, any side asking [0.35, 0.81) whose fair P >= ask + fee + 0.05; the settle is a 60 s TWAP the crowd prices off spot
+LATE = (60, 0.35, 0.81, 0.05)
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 PM_PRICE = "https://polymarket.com/api/crypto/crypto-price"
@@ -1283,6 +1286,8 @@ def snipe(a):
     if not mk:
         return emit("no_market", slug)
     tok = json.loads(mk["clobTokenIds"])
+    th = threading.Thread(target=snipe_late, args=(a, slug, mk, tok, T, end))
+    th.start()
     while True:
         bk = list(ThreadPoolExecutor(2).map(book, tok))
         asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
@@ -1313,8 +1318,26 @@ def snipe(a):
                 if str(s) not in c and bids[0][0] < s:
                     c[str(s)] = round(walk(bids, q=q)[0] or 0.0, 4)
         r |= {"b": lo, "c": c}
+    th.join()
     write([r], SNIPE)
     emit(("paper", "live")[r.get("v") == "l"], slug, **r)
+
+
+def snipe_late(a, slug, mk, tok, T, end):
+    tau, lo, hi, mg = LATE
+    time.sleep(max(0.0, end - tau - time.time()))
+    while time.time() < end - 3:
+        bk = list(ThreadPoolExecutor(2).map(book, tok))
+        asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
+        pu = p_fav(ASSETS[a.asset]["sym"], T, 0)
+        for i in (0, 1):
+            f = pu if i == 0 or pu is None else round(1 - pu, 4)
+            if f is not None and lo <= asks[i] < hi and f >= asks[i] + fee(asks[i], mk.get("feeSchedule")) + mg:
+                x, q = walk(bk[i][1], usd=a.usd)
+                if x:
+                    return write([{"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
+                                   "x": round(x, 4), "q": round(q, 4), "f": f, "r": "t", "c": {}}], SNIPE)
+        time.sleep(1)
 
 
 def snipe_day_loss(now):
@@ -1348,19 +1371,21 @@ def snipe_live(tok, q, m, usd):
 
 def snipe_score(a):
     rs = [json.loads(x) for x in SNIPE.read_text().splitlines() if x.strip()] if SNIPE.exists() else []
-    rs = [r for r in rs if r.get("x") and "c" in r and a.lo <= r["a"][r["d"] == "down"] < a.hi]
-    mk = dict(zip([r["s"] for r in rs], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs])))
-    done = []
-    for r in rs:
+    late = [r for r in rs if r.get("r") == "t"]
+    rs = [r for r in rs if r.get("x") and "c" in r and r.get("r") != "t" and a.lo <= r["a"][r["d"] == "down"] < a.hi]
+    mk = dict(zip([r["s"] for r in rs + late], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs + late])))
+    done, done_late = [], []
+    for r in rs + late:
         m = mk.get(r["s"]) or {}
         op = json.loads(m.get("outcomePrices") or "[]")
         if m.get("closed") and op in (["1", "0"], ["0", "1"]):
-            done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
+            (done_late if r.get("r") == "t" else done).append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
     if not done:
         return print(f"resolved 0 of {len(rs)} paper trades in [{a.lo}, {a.hi})")
     show("all", done)
     show(f"delphi filter (fair >= price + fee + {a.mg})",
          [z for z in done if z[0].get("f") is not None and z[0]["f"] >= z[0]["x"] + fee(z[0]["x"], z[2]) + a.mg])
+    show("late rule (<=60s, 35-81c, fair >= ask + fee + 0.05, paper only)", done_late)
 
 
 def show(tag, done):
