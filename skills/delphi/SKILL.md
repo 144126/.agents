@@ -15,7 +15,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snap now|next --asset btc|eth|
 uv run --script ~/.agents/skills/delphi/delphi.py edge --asset btc --window 5m --days 30
 uv run --script ~/.agents/skills/delphi/delphi.py log --slug <slug> --p 0.55 --side up|down|none --price 0.50 --note "..."
 uv run --script ~/.agents/skills/delphi/delphi.py score
-uv run --script ~/.agents/skills/delphi/delphi.py snipe [--tau 30 --lo 0.85 --hi 0.95 --mg -1 --usd 1]   # paper (live with ~/.config/delphi/LIVE): first time the favourite ask is in [lo, hi) with <= tau s left; mg -1 = no fair-value filter
+uv run --script ~/.agents/skills/delphi/delphi.py snipe [--legs btc/5m/30/0.85/0.95/-1/l,eth/5m/30/0.85/0.95/-1/l,btc/15m/90/0.85/0.95/-1/p --usd 1 --frac 0.05]   # each leg = asset/window/tau/lo/hi/mg/l|p: first time the favourite ask is in [lo, hi) with <= tau s left; mg -1 = no filter; p = paper only; live needs ~/.config/delphi/LIVE
 uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (tau/lo/hi/mg) and live fills
 ```
 - `edge` is the validation run and writes `edges-<asset>-<window>.json`. Re-run it daily for each market you trade; `snap` reads it.
@@ -45,6 +45,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (
   - `limits.json` allows it (Ed: $3 a trade, $5/day loss stop, 5 shares).
 - snipe real money: `touch ~/.config/delphi/LIVE` (paper: `rm` it). Needs live.env (private key + wallet; relayer optional), no KILL, geoblock open, stake <= max_trade_usd, today's live snipe loss < daily_loss_usd. Orders are FAK BUY by dollar amount (`--usd`, default $1) up to best ask + 2c; rows get v l, o, u, g shares, y usd. Market orders go down to $1 (the 5-share minimum is for limit orders); winners auto-redeem about a minute after close (auto-redeem operator approved).
 - snipe evidence (28-day tape 2026-10-08..11-05, 8,039 windows, first touch in time order, A/B = halves): 90s/81-99c is breakeven (A -0.23%, B +0.37% roi); <=30s/85-95c no filter A +1.69%, B +1.59% (lag 0), +5.9/+4.6% with 2s lag + 1c slip; >=95c ~0%; the fair-value filter and the late 35-81c rule were not stable across halves (dropped). Model vs market log loss: market wins at every tau, model coef ~0. Trap: sort prints by time within a window before taking the first touch (a side-then-time sort picked Up first and faked +5% roi).
+- other markets, same 30s/85-95c rule (14-day tapes to 2026-11-05, halves A/B, lag 0): eth 5m +1.74/+1.97% (replicates btc), sol 5m +1.94/-1.21% (skip), xrp 5m -3.10/-1.84% (skip); btc 15m best at 90s/85-95c +3.54/+3.54% (found by scanning, so paper only). Depth: median $199 bought within 1c in the 5 s after a btc entry. Order helper start (uv + sign-in) takes ~10.7 s, so it is armed at job start.
 - BUY_BOTH never goes live.
 - kill switch: `touch ~/.config/delphi/KILL`. grade results with `delphi.py score` (paper and live are scored separately).
 - `trade_live.py` (polymarket-client 0.16.0): probe place+cancel verified 2026-11-05; urllib needs a User-Agent (403 otherwise). Magic export: Settings > Account > Start Export (reveal.magic.link). Wallet = Settings > Profile "Address" (proxy), signer differs.

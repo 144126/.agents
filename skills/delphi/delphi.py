@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -1271,10 +1272,25 @@ def p_fav(sym, T, i):
 
 
 def snipe(a):
+    """run every leg whose window ends in this 5-min cron slot; leg = asset/window/tau/lo/hi/mg/l|p (p = paper only)"""
+    th = []
+    for leg in a.legs.split(","):
+        asset, window, tau, lo, hi, mg, mode = leg.split("/")
+        W = WINDOWS[window]
+        if (time.time() // W * W + W) - time.time() > int(tau) + 200:
+            continue
+        b = argparse.Namespace(**vars(a) | {"asset": asset, "window": window, "tau": int(tau), "lo": float(lo), "hi": float(hi), "mg": float(mg), "mode": mode})
+        th.append(threading.Thread(target=snipe_one, args=(b,)))
+        th[-1].start()
+    for t in th:
+        t.join()
+
+
+def snipe_one(a):
     W = WINDOWS[a.window]
     T = int(time.time()) // W * W
     end = T + W
-    live = snipe_arm(a.usd) if (CFG / "LIVE").exists() else None
+    live = snipe_arm(a.usd) if a.mode == "l" and (CFG / "LIVE").exists() else None
     time.sleep(max(0.0, end - a.tau - time.time()))
     k = end - time.time()
     slug = f"{a.asset}-updown-{a.window}-{T}"
@@ -1292,7 +1308,7 @@ def snipe(a):
             break
         time.sleep(1)
     x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
-    r = {"s": slug, "r": f"{a.tau}/{a.lo}/{a.hi}/{a.mg}", "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
+    r = {"s": slug, "r": f"{a.asset}/{a.window}/{a.tau}/{a.lo:g}/{a.hi:g}/{a.mg:g}", "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
          "x": x and round(x, 4), "q": round(q, 4), "f": x and a.mg > -1 and p_fav(ASSETS[a.asset]["sym"], T, i) or None}
     if x and a.mg > -1 and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
         r |= {"x": None, "w": r["x"]}
@@ -1356,8 +1372,9 @@ def snipe_rows():
 
 
 def snipe_score(a):
-    rs = [r | {"x": r.get("x") or r.get("w"), "r": r.get("r", "old 90/0.81/0.99")} for r in snipe_rows() if (r.get("x") or r.get("w")) and r.get("r") != "t"]
-    rs = [r for r in rs if float(r["r"].split("/")[1]) <= r["a"][r["d"] == "down"] < float(r["r"].split("/")[2])]
+    rs = [r | {"x": r.get("x") or r.get("w"), "r": r.get("r", "btc/5m/90/0.81/0.99/0.02")} for r in snipe_rows() if (r.get("x") or r.get("w")) and r.get("r") != "t"]
+    rs = [r | {"r": r["r"] if r["r"].count("/") == 5 else "btc/5m/" + r["r"]} for r in rs]
+    rs = [r for r in rs if float(r["r"].split("/")[-3]) <= r["a"][r["d"] == "down"] < float(r["r"].split("/")[-2])]
     mk = dict(zip({r["s"] for r in rs}, ThreadPoolExecutor(12).map(market, list({r["s"] for r in rs}))))
     done = []
     for r in rs:
@@ -1366,7 +1383,7 @@ def snipe_score(a):
         if m.get("closed") and op in (["1", "0"], ["0", "1"]):
             done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
     for tag in sorted({r["r"] for r, _, _ in done}, reverse=True):
-        show(f"rule {tag} (tau/lo/hi/mg)", [z for z in done if z[0]["r"] == tag])
+        show(f"{tag} (asset/window/tau/lo/hi/mg)", [z for z in done if z[0]["r"] == tag])
     show("live (real money fills)", [z for z in done if z[0].get("v") == "l" and z[0].get("g")])
 
 
@@ -1414,14 +1431,9 @@ def main():
     t_.add_argument("--decision", required=True)
     t_.add_argument("--live", action="store_true")
     n_ = sub.add_parser("snipe")
-    n_.add_argument("--asset", default="btc", choices=list(ASSETS))
-    n_.add_argument("--window", default="5m", choices=list(WINDOWS))
-    n_.add_argument("--tau", type=int, default=30)
-    n_.add_argument("--lo", type=float, default=0.85)
-    n_.add_argument("--hi", type=float, default=0.95)
+    n_.add_argument("--legs", default="btc/5m/30/0.85/0.95/-1/l,eth/5m/30/0.85/0.95/-1/l,btc/15m/90/0.85/0.95/-1/p")
     n_.add_argument("--usd", type=float, default=1)
     n_.add_argument("--frac", type=float, default=0.05)
-    n_.add_argument("--mg", type=float, default=-1)
     sub.add_parser("snipe-score")
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
