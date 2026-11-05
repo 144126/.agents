@@ -14,7 +14,7 @@ from polymarket import RelayerApiKey, SecureClient
 from polymarket.models.clob.order_response import AcceptedOrder
 
 ENV = os.path.expanduser("~/.config/delphi/live.env")
-KEYS = ("POLYMARKET_PRIVATE_KEY", "POLYMARKET_WALLET", "POLYMARKET_RELAYER_KEY", "POLYMARKET_RELAYER_ADDRESS")
+KEYS = ("POLYMARKET_PRIVATE_KEY", "POLYMARKET_WALLET")
 GAMMA = "https://gamma-api.polymarket.com"
 WINDOWS = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400}
 
@@ -52,7 +52,7 @@ def load_env():
 
 
 def get_json(url):
-    with urllib.request.urlopen(url, timeout=10) as r:
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"}), timeout=10) as r:
         return json.load(r)
 
 
@@ -90,19 +90,14 @@ def probe(asset, window):
     try:
         slug, tok = live_token(asset, window)
         print(f"window {slug}")
-        c = SecureClient.create(
-            private_key=env["POLYMARKET_PRIVATE_KEY"],
-            wallet=env["POLYMARKET_WALLET"],
-            api_key=RelayerApiKey(key=env["POLYMARKET_RELAYER_KEY"], address=env["POLYMARKET_RELAYER_ADDRESS"]),
-        )
+        rk = env.get("POLYMARKET_RELAYER_KEY") and RelayerApiKey(key=env["POLYMARKET_RELAYER_KEY"], address=env["POLYMARKET_RELAYER_ADDRESS"])
+        c = SecureClient.create(private_key=env["POLYMARKET_PRIVATE_KEY"], wallet=env["POLYMARKET_WALLET"], api_key=rk or None)
         r = c.place_limit_order(asset_id=tok, side="BUY", price="0.01", size="5", post_only=True)
         if not isinstance(r, AcceptedOrder):
             raise SystemExit(f"Order rejected by Polymarket: {r}. Fix the reason shown, then retry.")
         print(f"placed {r.order_id} status {r.status}")
         x = c.cancel_order(order_id=r.order_id)
         print(f"cancel canceled={x.canceled} not_canceled={x.not_canceled}")
-        open_ids = [o.id for o in c.list_open_orders(asset_id=tok)]
-        print(f"open orders for token: {open_ids or 'none'}")
         print(f"collateral balance (raw): {c.get_balance_allowance(asset_type='COLLATERAL').balance}")
     except Exception as e:
         raise SystemExit(fix_hint(e))
