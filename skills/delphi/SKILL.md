@@ -15,7 +15,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snap now|next --asset btc|eth|
 uv run --script ~/.agents/skills/delphi/delphi.py edge --asset btc --window 5m --days 30
 uv run --script ~/.agents/skills/delphi/delphi.py log --slug <slug> --p 0.55 --side up|down|none --price 0.50 --note "..."
 uv run --script ~/.agents/skills/delphi/delphi.py score
-uv run --script ~/.agents/skills/delphi/delphi.py snipe [--tau 90 --lo 0.81 --mg 0.02 --usd 5]   # paper: first time the favourite ask hits lo with <= tau s left, buy only if fair >= ask + fee + mg; log cash-out stops
+uv run --script ~/.agents/skills/delphi/delphi.py snipe [--tau 90 --lo 0.81 --mg 0.02 --usd 1]   # paper: first time the favourite ask hits lo with <= tau s left, buy only if fair >= ask + fee + mg; log cash-out stops
 uv run --script ~/.agents/skills/delphi/delphi.py snipe-score [--lo 0.81 --hi 0.99]
 ```
 - `edge` is the validation run and writes `edges-<asset>-<window>.json`. Re-run it daily for each market you trade; `snap` reads it.
@@ -44,6 +44,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score [--lo 0.81 --hi 0.
   - the slug hasn't traded yet;
   - `limits.json` allows it (Ed: $3 a trade, $5/day loss stop, 5 shares).
 - snipe real money: `touch ~/.config/delphi/LIVE` (paper: `rm` it). Needs live.env (private key + wallet; relayer optional), no KILL, geoblock open, stake <= max_trade_usd, today's live snipe loss < daily_loss_usd. Orders are FAK BUY by dollar amount (`--usd`, default $1) up to best ask + 2c; rows get v l, o, u, g shares, y usd. Market orders go down to $1 (the 5-share minimum is for limit orders); winners auto-redeem about a minute after close (auto-redeem operator approved).
+- snipe also paper-tests a late rule in a thread (`LATE`: last 60 s, any side asking 35-81c with fair >= ask + fee + 0.05; rows `r` "t", never live). 14-day tape (2026-10-22..11-05): +11 to +33% roi in both halves; plain late-favourite was +5% roi (every day green), the filter added little.
 - BUY_BOTH never goes live.
 - kill switch: `touch ~/.config/delphi/KILL`. grade results with `delphi.py score` (paper and live are scored separately).
 - `trade_live.py` (polymarket-client 0.16.0): probe place+cancel verified 2026-11-05; urllib needs a User-Agent (403 otherwise). Magic export: Settings > Account > Start Export (reveal.magic.link). Wallet = Settings > Profile "Address" (proxy), signer differs.
