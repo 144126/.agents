@@ -113,3 +113,6 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (
   - test it with `DELPHI_FAIL=rtds|index`.
   - if rtds ever starts returning xau ticks, K must move to chainlink too, or every gold call will read MIXED.
 - ta-lib 0.8.3 has a cp314 wheel; the first run adds ~100 MB to the uv cache.
+- re-test snipe rules: `research/` (data dir `$DELPHI_RESEARCH`, default ~/.local/share/delphi/research, ~90 MB for 28 days btc 5m; delete after).
+  - `python3 -s -E research/tape.py btc 5m <t0> <t1>` (BUY prints per window), `python3 -s -E research/px.py BTCUSDT <t0-900> <t1>` (binance 1s), then `uv run --with numpy --with scipy python research/bt.py btc 5m` or `research/multi.py eth 5m` (run from research/ so `fast` imports).
+  - keep the tape on disk, not tmpfs: two reboots wiped it mid-test.
