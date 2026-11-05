@@ -12,7 +12,6 @@ import re
 import stat
 import subprocess
 import sys
-import threading
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -29,12 +28,10 @@ np.seterr(all="ignore")
 HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
-# snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo, or f < x + fee + mg),
-# q shares, f delphi fair P(d wins) at entry, v "l" = real order (o id, u status, g shares got, y usd paid), b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
+# snipe keys: s slug, r rule "tau/lo/hi/mg", t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down,
+# x avg fill for the stake (null = no entry, or f < x + fee + mg), w would-be fill when the filter skipped, q shares,
+# f delphi fair P(d wins) at entry; live adds v "l", o order id, u status, g shares got, y usd paid
 SNIPE = HOME / "snipe.jsonl"
-STOPS = (0.8, 0.7, 0.5, 0.3)
-# paper-only late rule (r "t"): last 60 s, any side asking [0.35, 0.81) whose fair P >= ask + fee + 0.05; the settle is a 60 s TWAP the crowd prices off spot
-LATE = (60, 0.35, 0.81, 0.05)
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 PM_PRICE = "https://polymarket.com/api/crypto/crypto-price"
@@ -1286,8 +1283,6 @@ def snipe(a):
     if not mk:
         return emit("no_market", slug)
     tok = json.loads(mk["clobTokenIds"])
-    th = threading.Thread(target=snipe_late, args=(a, slug, mk, tok, T, end))
-    th.start()
     live = snipe_arm(a.usd) if (CFG / "LIVE").exists() else None
     while True:
         bk = list(ThreadPoolExecutor(2).map(book, tok))
@@ -1297,7 +1292,7 @@ def snipe(a):
             break
         time.sleep(1)
     x, q = walk(bk[i][1], usd=a.usd) if a.lo <= asks[i] < a.hi else (None, 0.0)
-    r = {"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
+    r = {"s": slug, "r": f"{a.tau}/{a.lo}/{a.hi}/{a.mg}", "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
          "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
     if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
         r |= {"x": None, "w": r["x"]}
@@ -1309,38 +1304,8 @@ def snipe(a):
         r["x"], r["q"] = (round(r["y"] / r["g"], 4), r["g"]) if r["g"] else (None, 0.0)
     if isinstance(live, subprocess.Popen):
         live.kill()
-    if r["x"] and q * r["x"] >= 0.99:
-        lo, c = None, {}
-        while time.time() < end - 1:
-            time.sleep(2)
-            bids = book(tok[i])[0]
-            if not bids:
-                continue
-            lo = min(lo or 1.0, bids[0][0])
-            for s in STOPS:
-                if str(s) not in c and bids[0][0] < s:
-                    c[str(s)] = round(walk(bids, q=q)[0] or 0.0, 4)
-        r |= {"b": lo, "c": c}
-    th.join()
     write([r], SNIPE)
     emit(("paper", "live")[r.get("v") == "l"], slug, **r)
-
-
-def snipe_late(a, slug, mk, tok, T, end):
-    tau, lo, hi, mg = LATE
-    time.sleep(max(0.0, end - tau - time.time()))
-    while time.time() < end - 3:
-        bk = list(ThreadPoolExecutor(2).map(book, tok))
-        asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
-        pu = p_fav(ASSETS[a.asset]["sym"], T, 0)
-        for i in (0, 1):
-            f = pu if i == 0 or pu is None else round(1 - pu, 4)
-            if f is not None and lo <= asks[i] < hi and f >= asks[i] + fee(asks[i], mk.get("feeSchedule")) + mg:
-                x, q = walk(bk[i][1], usd=a.usd)
-                if x:
-                    return write([{"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
-                                   "x": round(x, 4), "q": round(q, 4), "f": f, "r": "t", "c": {}}], SNIPE)
-        time.sleep(1)
 
 
 def snipe_day_loss(now):
@@ -1389,22 +1354,18 @@ def snipe_rows():
 
 
 def snipe_score(a):
-    rs = snipe_rows()
-    rs = [r | {"x": r.get("x") or r.get("w"), "c": r.get("c", {})} for r in rs if r.get("x") or r.get("w")]
-    rs = [r for r in rs if r.get("r") == "t" or a.lo <= r["a"][r["d"] == "down"] < a.hi]
-    mk = dict(zip([r["s"] for r in rs], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs])))
+    rs = [r | {"x": r.get("x") or r.get("w"), "r": r.get("r", "old 90/0.81/0.99")} for r in snipe_rows() if (r.get("x") or r.get("w")) and r.get("r") != "t"]
+    rs = [r for r in rs if float(r["r"].split("/")[1]) <= r["a"][r["d"] == "down"] < float(r["r"].split("/")[2])]
+    mk = dict(zip({r["s"] for r in rs}, ThreadPoolExecutor(12).map(market, list({r["s"] for r in rs}))))
     done = []
     for r in rs:
         m = mk.get(r["s"]) or {}
         op = json.loads(m.get("outcomePrices") or "[]")
         if m.get("closed") and op in (["1", "0"], ["0", "1"]):
             done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
-    fav = [z for z in done if z[0].get("r") != "t"]
-    show("all first touches (filter ignored)", fav)
-    show(f"delphi filter (fair >= price + fee + {a.mg})",
-         [z for z in fav if z[0].get("f") is not None and z[0]["f"] >= z[0]["x"] + fee(z[0]["x"], z[2]) + a.mg])
-    show("late rule (<=60s, 35-81c, fair >= ask + fee + 0.05, paper only)", [z for z in done if z[0].get("r") == "t"])
-    show("live (real money fills)", [z for z in fav if z[0].get("v") == "l" and z[0].get("g")])
+    for tag in sorted({r["r"] for r, _, _ in done}, reverse=True):
+        show(f"rule {tag} (tau/lo/hi/mg)", [z for z in done if z[0]["r"] == tag])
+    show("live (real money fills)", [z for z in done if z[0].get("v") == "l" and z[0].get("g")])
 
 
 def show(tag, done):
@@ -1415,15 +1376,8 @@ def show(tag, done):
     hold = [r["q"] * w - c for (r, w, _), c in zip(done, cost)]
     days = max((done[-1][0]["t"] - done[0][0]["t"]) / 86400, 1 / 288)
     be = sum(r["x"] + fee(r["x"], fs) for r, _, fs in done) / n
-    print(f"{tag}: paper trades {n} ({n / days:.0f}/day) wins {wins} ({100 * wins / n:.2f}%) breakeven {100 * be:.2f}% "
-          f"staked ${sum(cost):.2f} pnl ${sum(hold):+.2f} (${sum(hold) / n:+.3f}/trade, ${sum(hold) / days:+.2f}/day)")
-    for s in STOPS:
-        k = str(s)
-        v = [r["q"] * (r["c"][k] - fee(r["c"][k], fs)) - c if k in r["c"] else h
-             for (r, _, fs), c, h in zip(done, cost, hold)]
-        fired = [(r, w) for r, w, _ in done if k in r["c"]]
-        print(f"  cash out below {s}: fired {len(fired)} (would have won {sum(w for _, w in fired)}) "
-              f"pnl ${sum(v):+.2f} vs hold ${sum(hold):+.2f}")
+    print(f"{tag}: trades {n} ({n / days:.0f}/day) wins {wins} ({100 * wins / n:.2f}%) breakeven {100 * be:.2f}% "
+          f"staked ${sum(cost):.2f} pnl ${sum(hold):+.2f} (roi {100 * sum(hold) / sum(cost):+.2f}%, ${sum(hold) / days:+.2f}/day)")
 
 
 def main():
@@ -1460,15 +1414,12 @@ def main():
     n_ = sub.add_parser("snipe")
     n_.add_argument("--asset", default="btc", choices=list(ASSETS))
     n_.add_argument("--window", default="5m", choices=list(WINDOWS))
-    n_.add_argument("--tau", type=float, default=90)
-    n_.add_argument("--lo", type=float, default=0.81)
-    n_.add_argument("--hi", type=float, default=0.99)
+    n_.add_argument("--tau", type=int, default=30)
+    n_.add_argument("--lo", type=float, default=0.85)
+    n_.add_argument("--hi", type=float, default=0.95)
     n_.add_argument("--usd", type=float, default=1)
-    n_.add_argument("--mg", type=float, default=0.02)
-    m_ = sub.add_parser("snipe-score")
-    m_.add_argument("--lo", type=float, default=0.81)
-    m_.add_argument("--mg", type=float, default=0.02)
-    m_.add_argument("--hi", type=float, default=0.99)
+    n_.add_argument("--mg", type=float, default=-1)
+    sub.add_parser("snipe-score")
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
      "markets": markets, "log": log, "score": score, "snipe": snipe, "snipe-score": snipe_score}[a.cmd](a)
