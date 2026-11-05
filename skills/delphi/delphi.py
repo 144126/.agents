@@ -29,7 +29,7 @@ HOME = Path(os.environ.get("DELPHI_HOME", Path.home() / ".local/share/delphi"))
 # journal keys: t time, s slug, p P(up) fair, d side up|down, x price, m market P(up) mid (log), n note (log), v venue p|l (absent = log), a action, q shares, o order id, u status
 JOURNAL = HOME / "journal.jsonl"
 # snipe keys: s slug, t entry time, k secs left, a best asks [up, down] at entry, d favourite up|down, x avg fill for the stake (null = never hit lo, or f < x + fee + mg),
-# q shares, f delphi fair P(d wins) at entry, b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
+# q shares, f delphi fair P(d wins) at entry, v "l" = real order (o id, u status, g shares got, y usd paid), b lowest best bid of d until close, c {stop: avg sell price for q at the first poll whose best bid < stop}
 SNIPE = HOME / "snipe.jsonl"
 STOPS = (0.8, 0.7, 0.5, 0.3)
 GAMMA = "https://gamma-api.polymarket.com"
@@ -906,7 +906,7 @@ def live_env():
     if not f.exists() or stat.S_IMODE(f.stat().st_mode) != 0o600:
         return None
     env = dict(x.split("=", 1) for x in f.read_text().splitlines() if "=" in x)
-    keys = ["POLYMARKET_PRIVATE_KEY", "POLYMARKET_WALLET", "POLYMARKET_RELAYER_KEY", "POLYMARKET_RELAYER_ADDRESS"]
+    keys = ["POLYMARKET_PRIVATE_KEY", "POLYMARKET_WALLET"]
     return env if all(env.get(k) for k in keys) else None
 
 
@@ -1295,6 +1295,12 @@ def snipe(a):
          "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
     if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
         r["x"] = None
+    if r["x"] and q >= float(mk.get("orderMinSize") or 0) and (CFG / "LIVE").exists():
+        r |= snipe_live(tok[i], q, round(min(0.99, asks[i] + 0.02), 2), a.usd)
+        if not r["g"]:
+            r["x"] = None
+        else:
+            r["x"], r["q"] = round(r["y"] / r["g"], 4), r["g"]
     if r["x"] and q >= float(mk.get("orderMinSize") or 0):
         lo, c = None, {}
         while time.time() < end - 1:
@@ -1308,7 +1314,36 @@ def snipe(a):
                     c[str(s)] = round(walk(bids, q=q)[0] or 0.0, 4)
         r |= {"b": lo, "c": c}
     write([r], SNIPE)
-    emit("paper", slug, **r)
+    emit(("paper", "live")[r.get("v") == "l"], slug, **r)
+
+
+def snipe_day_loss(now):
+    rs = [json.loads(x) for x in SNIPE.read_text().splitlines() if x.strip()] if SNIPE.exists() else []
+    loss = 0.0
+    for r in rs:
+        if r.get("v") != "l" or not r.get("x") or r["t"] < now - now % 86400:
+            continue
+        m = market(r["s"]) or {}
+        op = json.loads(m.get("outcomePrices") or "[]")
+        won = m.get("closed") and op in (["1", "0"], ["0", "1"]) and (op[0] == "1") == (r["d"] == "up")
+        loss += 0.0 if won else r["q"] * (r["x"] + fee(r["x"], m.get("feeSchedule")))
+    return loss
+
+
+def snipe_live(tok, q, m, usd):
+    lim, env = limits(), live_env()
+    why = ("KILL file present" if (CFG / "KILL").exists() else "live.env missing, not mode 600, or missing keys" if env is None
+           else f"stake {usd} > max_trade_usd {lim['max_trade_usd']}" if usd > lim["max_trade_usd"]
+           else "geoblock: blocked or unknown" if geo_blocked()
+           else "daily loss stop" if snipe_day_loss(time.time()) >= lim["daily_loss_usd"] else None)
+    if why:
+        return {"v": "l", "u": f"refused: {why}", "g": 0.0}
+    p = subprocess.run(["uv", "run", "-q", "--script", str(DIR / "trade_live.py"), "fak"], input=json.dumps({"tok": tok, "q": round(q, 2), "m": m}),
+                       capture_output=True, text=True, env={**os.environ, **env}, timeout=20)
+    try:
+        return {"v": "l", **json.loads(p.stdout.strip().splitlines()[-1])}
+    except (ValueError, IndexError):
+        return {"v": "l", "u": f"error: {p.stderr.strip()[-200:]}", "g": 0.0}
 
 
 def snipe_score(a):

@@ -108,7 +108,20 @@ def probe(asset, window):
         raise SystemExit(fix_hint(e))
 
 
-if sys.argv[1:2] == ["probe"]:
+def fak():
+    j = json.load(sys.stdin)
+    e = os.environ
+    rk = e.get("POLYMARKET_RELAYER_KEY") and RelayerApiKey(key=e["POLYMARKET_RELAYER_KEY"], address=e["POLYMARKET_RELAYER_ADDRESS"])
+    c = SecureClient.create(private_key=e["POLYMARKET_PRIVATE_KEY"], wallet=e["POLYMARKET_WALLET"], api_key=rk or None)
+    r = c.place_market_order(asset_id=j["tok"], side="BUY", shares=str(j["q"]), max_price=str(j["m"]), order_type="FAK")
+    ok = isinstance(r, AcceptedOrder)
+    print(json.dumps({"o": getattr(r, "order_id", None), "u": getattr(r, "status", None) if ok else f"rejected: {r}"[:200],
+                      "g": float(r.taking_amount or 0) if ok else 0.0, "y": float(r.making_amount or 0) if ok else 0.0}))
+
+
+if sys.argv[1:2] == ["fak"]:
+    fak()
+elif sys.argv[1:2] == ["probe"]:
     ap = argparse.ArgumentParser(prog="trade_live.py probe")
     ap.add_argument("--asset", required=True)
     ap.add_argument("--window", required=True, choices=WINDOWS)

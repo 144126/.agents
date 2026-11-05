@@ -43,6 +43,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score [--lo 0.81 --hi 0.
   - the decision is < 10 s old;
   - the slug hasn't traded yet;
   - `limits.json` allows it (Ed: $3 a trade, $5/day loss stop, 5 shares).
+- snipe real money: `touch ~/.config/delphi/LIVE` (paper: `rm` it). Needs live.env (private key + wallet; relayer optional), no KILL, geoblock open, stake <= max_trade_usd, today's live snipe loss < daily_loss_usd. Orders are FAK BUY up to best ask + 2c; rows get v l, o, u, g shares, y usd.
 - BUY_BOTH never goes live.
 - kill switch: `touch ~/.config/delphi/KILL`. grade results with `delphi.py score` (paper and live are scored separately).
 - `trade_live.py` (polymarket-client 0.16.0) has never sent an order.
