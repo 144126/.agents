@@ -1288,6 +1288,7 @@ def snipe(a):
     tok = json.loads(mk["clobTokenIds"])
     th = threading.Thread(target=snipe_late, args=(a, slug, mk, tok, T, end))
     th.start()
+    live = snipe_arm(a.usd) if (CFG / "LIVE").exists() else None
     while True:
         bk = list(ThreadPoolExecutor(2).map(book, tok))
         asks = [b[1][0][0] if b[1] else 0.0 for b in bk]
@@ -1299,13 +1300,15 @@ def snipe(a):
     r = {"s": slug, "t": int(time.time()), "k": round(end - time.time(), 1), "a": asks, "d": ("up", "down")[i],
          "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
     if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
-        r["x"] = None
-    if r["x"] and q * r["x"] >= 0.99 and (CFG / "LIVE").exists():
-        r |= snipe_live(tok[i], q, round(min(0.99, asks[i] + 0.02), 2), a.usd)
-        if not r["g"]:
-            r["x"] = None
-        else:
-            r["x"], r["q"] = round(r["y"] / r["g"], 4), r["g"]
+        r |= {"x": None, "w": r["x"]}
+    if r["x"] and q * r["x"] >= 0.99 and live:
+        r |= snipe_live(live, tok[i], round(min(0.99, asks[i] + 0.02), 2), a.usd)
+        live = None
+        if r["g"] > 1000 * q:
+            r["g"], r["y"] = r["g"] / 1e6, r["y"] / 1e6
+        r["x"], r["q"] = (round(r["y"] / r["g"], 4), r["g"]) if r["g"] else (None, 0.0)
+    if isinstance(live, subprocess.Popen):
+        live.kill()
     if r["x"] and q * r["x"] >= 0.99:
         lo, c = None, {}
         while time.time() < end - 1:
@@ -1341,7 +1344,7 @@ def snipe_late(a, slug, mk, tok, T, end):
 
 
 def snipe_day_loss(now):
-    rs = [json.loads(x) for x in SNIPE.read_text().splitlines() if x.strip()] if SNIPE.exists() else []
+    rs = snipe_rows()
     loss = 0.0
     for r in rs:
         if r.get("v") != "l" or not r.get("x") or r["t"] < now - now % 86400:
@@ -1353,39 +1356,55 @@ def snipe_day_loss(now):
     return loss
 
 
-def snipe_live(tok, q, m, usd):
+def snipe_arm(usd):
+    """gates once per window, then start trade_live.py fak early so the signed client is ready before the signal (returns why-refused or the process)"""
     lim, env = limits(), live_env()
     why = ("KILL file present" if (CFG / "KILL").exists() else "live.env missing, not mode 600, or missing keys" if env is None
            else f"stake {usd} > max_trade_usd {lim['max_trade_usd']}" if usd > lim["max_trade_usd"]
            else "geoblock: blocked or unknown" if geo_blocked()
            else "daily loss stop" if snipe_day_loss(time.time()) >= lim["daily_loss_usd"] else None)
-    if why:
-        return {"v": "l", "u": f"refused: {why}", "g": 0.0}
-    p = subprocess.run(["uv", "run", "-q", "--script", str(DIR / "trade_live.py"), "fak"], input=json.dumps({"tok": tok, "usd": usd, "m": m}),
-                       capture_output=True, text=True, env={**os.environ, **env}, timeout=20)
+    return why or subprocess.Popen(["uv", "run", "-q", "--script", str(DIR / "trade_live.py"), "fak"], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env={**os.environ, **env})
+
+
+def snipe_live(live, tok, m, usd):
+    if isinstance(live, str):
+        return {"v": "l", "u": f"refused: {live}", "g": 0.0, "y": 0.0}
     try:
-        return {"v": "l", **json.loads(p.stdout.strip().splitlines()[-1])}
-    except (ValueError, IndexError):
-        return {"v": "l", "u": f"error: {p.stderr.strip()[-200:]}", "g": 0.0}
+        out, err = live.communicate(json.dumps({"tok": tok, "usd": usd, "m": m}) + "\n", timeout=20)
+        return {"v": "l", **json.loads(out.strip().splitlines()[-1])}
+    except (ValueError, IndexError, subprocess.TimeoutExpired) as e:
+        live.kill()
+        return {"v": "l", "u": f"error: {type(e).__name__} {(locals().get('err') or '').strip()[-160:]}", "g": 0.0, "y": 0.0}
+
+
+def snipe_rows():
+    out = []
+    for x in SNIPE.read_text(errors="replace").splitlines() if SNIPE.exists() else []:
+        try:
+            out.append(json.loads(x))
+        except ValueError:
+            pass
+    return out
 
 
 def snipe_score(a):
-    rs = [json.loads(x) for x in SNIPE.read_text().splitlines() if x.strip()] if SNIPE.exists() else []
-    late = [r for r in rs if r.get("r") == "t"]
-    rs = [r for r in rs if r.get("x") and "c" in r and r.get("r") != "t" and a.lo <= r["a"][r["d"] == "down"] < a.hi]
-    mk = dict(zip([r["s"] for r in rs + late], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs + late])))
-    done, done_late = [], []
-    for r in rs + late:
+    rs = snipe_rows()
+    rs = [r | {"x": r.get("x") or r.get("w"), "c": r.get("c", {})} for r in rs if r.get("x") or r.get("w")]
+    rs = [r for r in rs if r.get("r") == "t" or a.lo <= r["a"][r["d"] == "down"] < a.hi]
+    mk = dict(zip([r["s"] for r in rs], ThreadPoolExecutor(12).map(market, [r["s"] for r in rs])))
+    done = []
+    for r in rs:
         m = mk.get(r["s"]) or {}
         op = json.loads(m.get("outcomePrices") or "[]")
         if m.get("closed") and op in (["1", "0"], ["0", "1"]):
-            (done_late if r.get("r") == "t" else done).append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
-    if not done:
-        return print(f"resolved 0 of {len(rs)} paper trades in [{a.lo}, {a.hi})")
-    show("all", done)
+            done.append((r, (op[0] == "1") == (r["d"] == "up"), m.get("feeSchedule")))
+    fav = [z for z in done if z[0].get("r") != "t"]
+    show("all first touches (filter ignored)", fav)
     show(f"delphi filter (fair >= price + fee + {a.mg})",
-         [z for z in done if z[0].get("f") is not None and z[0]["f"] >= z[0]["x"] + fee(z[0]["x"], z[2]) + a.mg])
-    show("late rule (<=60s, 35-81c, fair >= ask + fee + 0.05, paper only)", done_late)
+         [z for z in fav if z[0].get("f") is not None and z[0]["f"] >= z[0]["x"] + fee(z[0]["x"], z[2]) + a.mg])
+    show("late rule (<=60s, 35-81c, fair >= ask + fee + 0.05, paper only)", [z for z in done if z[0].get("r") == "t"])
+    show("live (real money fills)", [z for z in fav if z[0].get("v") == "l" and z[0].get("g")])
 
 
 def show(tag, done):

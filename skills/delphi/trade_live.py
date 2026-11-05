@@ -104,11 +104,17 @@ def probe(asset, window):
 
 
 def fak():
-    j = json.load(sys.stdin)
     e = os.environ
     rk = e.get("POLYMARKET_RELAYER_KEY") and RelayerApiKey(key=e["POLYMARKET_RELAYER_KEY"], address=e["POLYMARKET_RELAYER_ADDRESS"])
     c = SecureClient.create(private_key=e["POLYMARKET_PRIVATE_KEY"], wallet=e["POLYMARKET_WALLET"], api_key=rk or None)
-    r = c.place_market_order(asset_id=j["tok"], side="BUY", amount=str(j["usd"]), max_price=str(j["m"]), order_type="FAK")
+    line = sys.stdin.readline()
+    if not line.strip():
+        return
+    j = json.loads(line)
+    try:
+        r = c.place_market_order(asset_id=j["tok"], side="BUY", amount=str(j["usd"]), max_price=str(j["m"]), order_type="FAK")
+    except Exception as x:
+        return print(json.dumps({"o": None, "u": f"error: {type(x).__name__}: {str(x)[:160]}", "g": 0.0, "y": 0.0}))
     ok = isinstance(r, AcceptedOrder)
     print(json.dumps({"o": getattr(r, "order_id", None), "u": getattr(r, "status", None) if ok else f"rejected: {r}"[:200],
                       "g": float(r.taking_amount or 0) if ok else 0.0, "y": float(r.making_amount or 0) if ok else 0.0}))
