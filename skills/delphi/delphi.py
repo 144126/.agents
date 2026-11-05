@@ -1295,13 +1295,13 @@ def snipe(a):
          "x": x and round(x, 4), "q": round(q, 4), "f": x and p_fav(ASSETS[a.asset]["sym"], T, i)}
     if x and (r["f"] or 0) < x + fee(x, mk.get("feeSchedule")) + a.mg:
         r["x"] = None
-    if r["x"] and q >= float(mk.get("orderMinSize") or 0) and (CFG / "LIVE").exists():
+    if r["x"] and q * r["x"] >= 0.99 and (CFG / "LIVE").exists():
         r |= snipe_live(tok[i], q, round(min(0.99, asks[i] + 0.02), 2), a.usd)
         if not r["g"]:
             r["x"] = None
         else:
             r["x"], r["q"] = round(r["y"] / r["g"], 4), r["g"]
-    if r["x"] and q >= float(mk.get("orderMinSize") or 0):
+    if r["x"] and q * r["x"] >= 0.99:
         lo, c = None, {}
         while time.time() < end - 1:
             time.sleep(2)
@@ -1338,7 +1338,7 @@ def snipe_live(tok, q, m, usd):
            else "daily loss stop" if snipe_day_loss(time.time()) >= lim["daily_loss_usd"] else None)
     if why:
         return {"v": "l", "u": f"refused: {why}", "g": 0.0}
-    p = subprocess.run(["uv", "run", "-q", "--script", str(DIR / "trade_live.py"), "fak"], input=json.dumps({"tok": tok, "q": round(q, 2), "m": m}),
+    p = subprocess.run(["uv", "run", "-q", "--script", str(DIR / "trade_live.py"), "fak"], input=json.dumps({"tok": tok, "usd": usd, "m": m}),
                        capture_output=True, text=True, env={**os.environ, **env}, timeout=20)
     try:
         return {"v": "l", **json.loads(p.stdout.strip().splitlines()[-1])}
@@ -1419,7 +1419,7 @@ def main():
     n_.add_argument("--tau", type=float, default=90)
     n_.add_argument("--lo", type=float, default=0.81)
     n_.add_argument("--hi", type=float, default=0.99)
-    n_.add_argument("--usd", type=float, default=5)
+    n_.add_argument("--usd", type=float, default=1)
     n_.add_argument("--mg", type=float, default=0.02)
     m_ = sub.add_parser("snipe-score")
     m_.add_argument("--lo", type=float, default=0.81)

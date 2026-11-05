@@ -108,7 +108,7 @@ def fak():
     e = os.environ
     rk = e.get("POLYMARKET_RELAYER_KEY") and RelayerApiKey(key=e["POLYMARKET_RELAYER_KEY"], address=e["POLYMARKET_RELAYER_ADDRESS"])
     c = SecureClient.create(private_key=e["POLYMARKET_PRIVATE_KEY"], wallet=e["POLYMARKET_WALLET"], api_key=rk or None)
-    r = c.place_market_order(asset_id=j["tok"], side="BUY", shares=str(j["q"]), max_price=str(j["m"]), order_type="FAK")
+    r = c.place_market_order(asset_id=j["tok"], side="BUY", amount=str(j["usd"]), max_price=str(j["m"]), order_type="FAK")
     ok = isinstance(r, AcceptedOrder)
     print(json.dumps({"o": getattr(r, "order_id", None), "u": getattr(r, "status", None) if ok else f"rejected: {r}"[:200],
                       "g": float(r.taking_amount or 0) if ok else 0.0, "y": float(r.making_amount or 0) if ok else 0.0}))
