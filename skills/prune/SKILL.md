@@ -13,5 +13,5 @@ How: stubs, never deletes, so `parentUuid` chains and `tool_use`/`tool_result` p
 Traps:
 - Never edit a live session's jsonl in place. Never pick "newest jsonl in the project": parallel sessions and a changed cwd pick the wrong one.
 - Claude Code swaps big tool results for disk previews at load (`content-replacement` entries); prune sizes and rewrites those too.
-- Auto mode may deny the write as "Session Transcript Tampering" unless the user asked for prune.
+- Auto mode denies the write as "Session Transcript Tampering" until the user allows it. Verified 11-06: a resumed pruned copy loads and the model sees the stubs. A headless test resume on Opus costs ~$3 (cold cache; `--max-budget-usd` is checked only after the call).
 - Judge: `claude -p --json-schema` answers in `.structured_output`; `--no-session-persistence` leaves no transcript; unset `CLAUDECODE`, `CLAUDE_EFFORT` and `CLAUDE_CODE_EFFORT_LEVEL` or it inherits the session's max effort. `--bare` refuses OAuth, so it is not used.
