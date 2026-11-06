@@ -49,6 +49,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (
 - BUY_BOTH never goes live.
 - kill switch: `touch ~/.config/delphi/KILL`. grade results with `delphi.py score` (paper and live are scored separately).
 - `trade_live.py` (polymarket-client 0.16.0): probe place+cancel verified 2026-11-05; urllib needs a User-Agent (403 otherwise). Magic export: Settings > Account > Start Export (reveal.magic.link). Wallet = Settings > Profile "Address" (proxy), signer differs.
+- deposits: Polymarket bridge, per-wallet addresses from `curl -X POST bridge.polymarket.com/deposit -d {"address":<wallet>}`; check `curl bridge.polymarket.com/status/<deposit addr>` (DEPOSIT_DETECTED -> COMPLETED). 2026-11-05: 6.05 USDC on Solana to an older address (AHimY5...) sat at DEPOSIT_DETECTED >24 h while the current svm address differed; fix = support chat (user menu > Support, or `window.Intercom("showNewMessage", text)`). Copy a fresh address each time.
   - unverified: the GTD expiration units and the response fields.
   - the first live order must be supervised by hand before cron goes live.
 
