@@ -1361,6 +1361,19 @@ def snipe_live(live, tok, m, usd, frac):
         return {"v": "l", "u": f"error: {type(e).__name__} {(locals().get('err') or '').strip()[-160:]}", "g": 0.0, "y": 0.0}
 
 
+def deposits(a):
+    """bridge deposit status: current per-chain addresses for the live wallet plus any --addr; DEPOSIT_DETECTED means seen, COMPLETED means credited"""
+    w = (live_env() or {}).get("POLYMARKET_WALLET") or a.wallet
+    r = subprocess.run(["curl", "-s", "-m", "20", "-X", "POST", "https://bridge.polymarket.com/deposit", "-H", "content-type: application/json",
+                        "-d", json.dumps({"address": w})], capture_output=True, text=True).stdout
+    addrs = (json.loads(r or "{}").get("address") or {}) | {f"extra{i}": x for i, x in enumerate(a.addr)}
+    for chain, ad in addrs.items():
+        print(f"{chain} {ad}")
+        for t in (jget(f"https://bridge.polymarket.com/status/{ad}", 20) or {}).get("transactions", []):
+            when = dt.datetime.fromtimestamp(t["createdTimeMs"] / 1000, dt.UTC).strftime("%m-%d %H:%M UTC") if t.get("createdTimeMs") else "not done"
+            print(f"  {int(t['fromAmountBaseUnit']) / 1e6:.2f} {t['status']} {when}")
+
+
 def snipe_rows():
     out = []
     for x in SNIPE.read_text(errors="replace").splitlines() if SNIPE.exists() else []:
@@ -1435,9 +1448,12 @@ def main():
     n_.add_argument("--usd", type=float, default=1)
     n_.add_argument("--frac", type=float, default=0.05)
     sub.add_parser("snipe-score")
+    d_ = sub.add_parser("deposits")
+    d_.add_argument("--addr", nargs="*", default=[])
+    d_.add_argument("--wallet", default="")
     a = p.parse_args()
     {"snap": cmd_snap, "decide": cmd_decide, "judge": cmd_judge, "trade": cmd_trade, "edge": edge,
-     "markets": markets, "log": log, "score": score, "snipe": snipe, "snipe-score": snipe_score}[a.cmd](a)
+     "markets": markets, "log": log, "score": score, "snipe": snipe, "snipe-score": snipe_score, "deposits": deposits}[a.cmd](a)
 
 
 if __name__ == "__main__":
