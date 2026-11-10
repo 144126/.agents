@@ -54,6 +54,8 @@ Encode a compatible H.264/yuv420p MP4 with AAC audio and `-movflags +faststart`.
 
 Deliver the watchable MP4, individual selected drawings, original dialogue, exact prompts, editable timing and a rebuild script. Keep source files needed to revise the film, but delete scratch previews, failed outputs, duplicate images and temporary renders. Report actual limitations and separately measured costs.
 
+T3 inline HTML has a 25 MiB page limit. If an embedded film exceeds it, retain the full-quality deliverable and stream a smaller display encode into memory, e.g. `ffmpeg -i film.mp4 -vf scale=960:540 -c:v libx264 -crf 27 -an -movflags frag_keyframe+empty_moov -f mp4 pipe:1`; base64 that preview into temporary HTML and delete it after rendering. Do not save another video copy. Preserve audio for previews of voiced films; `-an` here is for silent comics.
+
 ## provider and local findings
 
 Observed 2026-11-10; recheck availability and prices for new work:
