@@ -34,6 +34,8 @@ Prompt each frame's camera setup, gaze, hand, prop orientation and emotional sub
 
 Inspect every result: identity, hand anatomy, costume, prop count, direction of travel, eyelines and pose progression. Fix demonstrated faults with targeted changes. Independent frames can drift even when each is individually attractive.
 
+For the RAHHHH fight, Ed liked the grounded practical apparel but rejected an airborne fighter facing away without a tactical reason. Specify each fighter's actual target, gaze, support and route; write the complete dramatic arc and every hit's exact prompt before generating the sequence. Use a fixed approved cast/location reference throughout, adding the preceding accepted drawing within a camera setup; reset references at a new setup so its composition can change without propagating defects.
+
 ## edit and verify
 
 Assemble held frames around the actual audio, with minimal sound effects that support visible actions. Keep speech clear; avoid a music bed by default when it adds no story information. Optional subtitles should be selectable, not burned across drawings without a reason.
