@@ -1,6 +1,6 @@
 ---
 name: storyboard-animatic
-description: Make voiced storyboard animatics from held drawings, with dialogue-led acting beats, consistent illustrated characters, frame-accurate timing and a watchable MP4. Use for pencil-board story reels or illustrated dialogue tests, rather than full character animation.
+description: Make voiced or silent storyboard animatics from illustrated frames, with consistent characters, readable dialogue, deliberate pacing and a watchable MP4. Use for pencil-board story reels, speech-bubble comics or illustrated dialogue tests, rather than full character animation.
 ---
 
 # storyboard animatic
@@ -16,7 +16,9 @@ Deliver a short film built from intentional held drawings and performed dialogue
 
 ## performance and timing
 
-Generate the dialogue before final timing. Use a small cast of appropriate public voices or authorized references. Direct emotional intent and conversational delivery; avoid narration cadence for dialogue. Keep the raw take, exact request without credentials, model identity and any measured charge.
+Choose voiced or silent delivery before generating audio. For voiced films, generate the dialogue before final timing. Use a small cast of appropriate public voices or authorized references. Direct emotional intent and conversational delivery; avoid narration cadence for dialogue. Keep the raw take, exact request without credentials, model identity and any measured charge.
+
+For silent comics, use the existing script directly as speech bubbles and pace for reading rather than the old voice take. EVAC feedback: no audio, dialogue in bubbles, slow Ken Burns movement per panel. Reveal turns in order, point tails toward the correct speaker, keep lettering stable and comfortably readable while the artwork moves, and avoid faces and important handovers. Use subtle crops that retain both people; do not regenerate approved art merely to add deterministic lettering. Verify the final MP4 contains only a video stream, rather than a muted audio track.
 
 When adapting an existing comic, inspect the actual pages and preserve its panel order and spoken wording unless the user permits changes. Do not force the full comic into a nine-second sample: let recorded performances determine runtime. If practical changes are authorized, document the changed lines; prefer specific missing information and visible elapsed time over universal administrative claims or instant results. For EVAC, the requested realism means detailed, believable African environments and actions rendered in expressive colored pencil, not photographic imagery.
 
