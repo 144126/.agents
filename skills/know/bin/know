@@ -1,59 +1,10 @@
 #!/home/ed/.venvs/know/bin/python
-import argparse, collections, contextlib, datetime, fcntl, json, math, os, re, sys, time
+import argparse, contextlib, datetime, fcntl, json, os, re, sys, time
 
 DIR = os.environ.get('KNOW_DIR') or os.path.expanduser('~/.know')
 MODEL = os.path.expanduser('~/models/arctic-embed-xs')
 line = '#{} {} {}'.format
 model = None
-PREFIX = '@know '
-
-
-def unpack(t):
-    # t lesson, s scope, a applicability, c diagnosis, r sources, o run outcome,
-    # x superseded ids, e expiry. Legacy rows stay unchanged and have no provenance.
-    v = {'t': t, 's': '', 'a': '', 'c': '', 'r': [], 'o': 'u', 'x': [], 'e': ''}
-    if t.startswith(PREFIX):
-        v.update(json.loads(t[len(PREFIX):]))
-    if not isinstance(v['t'], str) or v['o'] not in ('s', 'f', 'u'):
-        raise ValueError('invalid note text or outcome')
-    if any(not isinstance(v[k], str) for k in ('s', 'a', 'c', 'e')):
-        raise ValueError('invalid note metadata')
-    if not isinstance(v['r'], list) or any(not isinstance(x, str) for x in v['r']):
-        raise ValueError('invalid note sources')
-    if not isinstance(v['x'], list) or any(type(i) is not int or i < 0 for i in v['x']):
-        raise ValueError('invalid superseded ids')
-    if v['e']:
-        v['e'] = datetime.date.fromisoformat(v['e']).isoformat()
-    return v
-
-
-def journal(path):
-    r = {}
-    if not os.path.exists(path):
-        return r
-    with open(path, encoding='utf-8') as f:
-        for n, t in enumerate(f, 1):
-            m = re.fullmatch(r'#(\d+) (\d{4}-\d{2}-\d{2}) (.+)\n', t)
-            if not m:
-                raise ValueError(f'{path}:{n}: incomplete or invalid journal line; preserve it before repair')
-            i, d, t = int(m[1]), m[2], m[3]
-            datetime.date.fromisoformat(d)
-            unpack(t)
-            if i in r and r[i] != (d, t):
-                raise ValueError(f'{path}:{n}: conflicting id #{i}; preserve both entries')
-            r[i] = d, t
-    for i, (_, t) in r.items():
-        if any(x not in r or x >= i for x in unpack(t)['x']):
-            raise ValueError(f'{path}: #{i} must supersede an existing older note')
-    return r
-
-
-def sync_dir():
-    f = os.open(DIR, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(f)
-    finally:
-        os.close(f)
 
 
 def embed(texts):
@@ -92,17 +43,6 @@ def store():
                     raise
                 time.sleep(0.05)
         try:
-            saved = dict((i, (d, t)) for i, d, t in rows(q, 'SELECT i, d, t FROM n'))
-            recovered = 0
-            for i, (d, t) in journal(DIR + '/log').items():
-                if i in saved and saved[i] != (d, t):
-                    raise ValueError(f'journal/db conflict at #{i}; preserve both before repair')
-                if i not in saved:
-                    q.execute('INSERT INTO n (i, d, t) VALUES (?, ?, ?)', (i, d, t))
-                    recovered += 1
-            if recovered:
-                c.commit()
-                print(f'know: recovered {recovered} journal notes', file=sys.stderr)
             yield c, q
         finally:
             c.close()
@@ -113,72 +53,23 @@ def rows(q, sql, *a):
     return q.fetchall()
 
 
-def active(r, scope=None):
-    r = [(i, d, t) for i, d, t in r if not scope or not unpack(t).get('s')
-         or scope == unpack(t)['s'] or scope.startswith(unpack(t)['s'].rstrip('/') + '/')]
-    hidden = {i for _, _, t in r for i in unpack(t).get('x', [])}
-    today = datetime.date.today().isoformat()
-    return [(i, d, t) for i, d, t in r if i not in hidden
-            and (not unpack(t).get('e') or unpack(t)['e'] >= today)]
-
-
-def display(i, d, t, similarity=None):
-    v = unpack(t)
-    flags = [v.get('s') or 'global', 'run=' + {'s': 'success', 'f': 'failure', 'u': 'unknown'}[v.get('o', 'u')]]
-    if not v.get('r'):
-        flags.append('unlinked')
-    if similarity is not None:
-        flags.append(f'sim={similarity:.3f}')
-    print(line(i, d, v['t']) + ' [' + '; '.join(flags) + ']')
-    if v.get('a'):
-        print('  applies: ' + v['a'])
-    if v.get('r'):
-        print('  source: ' + ' | '.join(v['r']))
-
-
 def wake(a):
     with store() as (c, q):
-        r = active(rows(q, 'SELECT i, d, t FROM n ORDER BY i'), a.scope)
-    for x in r[-a.n:]:
-        display(*x)
+        r = rows(q, f'SELECT i, d, t FROM n ORDER BY i DESC LIMIT {a.n}')
+    for x in r[::-1]:
+        print(line(*x))
 
 
 def note(a):
     t = ' '.join(' '.join(a.a).split())
-    a.source = [x.strip() for x in a.source]
-    a.applies = ' '.join((a.applies or '').split())
     if not 0 < len(t) <= 280:
         sys.exit(f'know: the note has {len(t)} chars; the limit is 280')
     d = datetime.date.today().isoformat()
-    if a.expires:
-        a.expires = datetime.date.fromisoformat(a.expires).isoformat()
-    if (a.source or a.context or a.applies or a.supersedes or a.outcome != 'unknown') and not (a.source and a.applies):
-        sys.exit('know: structured lessons need --source and --applies; a source link is not proof')
-    if any('\n' in x or '\r' in x for x in (a.scope or '', *a.source)):
-        sys.exit('know: scope and sources must be single lines')
-    if any(not x.strip() for x in a.source):
-        sys.exit('know: empty source')
-    v = {'t': t, 's': a.scope or '', 'a': a.applies or '', 'c': a.context or '',
-         'r': a.source, 'o': {'success': 's', 'failure': 'f', 'unknown': 'u'}[a.outcome],
-         'x': sorted(set(a.supersedes)), 'e': a.expires or ''}
-    t = PREFIX + json.dumps(v, ensure_ascii=False, separators=(',', ':'))
-    if len(t) > 8192:
-        sys.exit('know: note and metadata exceed 8192 chars')
     with store() as (c, q):
-        r = rows(q, 'SELECT i, d, t FROM n ORDER BY i')
-        if not set(v['x']).issubset({i for i, _, _ in r}):
-            sys.exit('know: superseded id does not exist')
-        for i, _, old in active(r):
-            if unpack(old) == v:
-                print(f'#{i} (already saved)')
-                return
         i = rows(q, 'SELECT coalesce(max(i), -1) + 1 FROM n')[0][0]
         # journal first: it must hold every note that the db holds
         with open(DIR + '/log', 'a', encoding='utf-8') as f:
             f.write(line(i, d, t) + '\n')
-            f.flush()
-            os.fsync(f.fileno())
-        sync_dir()
         q.execute('INSERT INTO n (i, d, t) VALUES (?, ?, ?)', (i, d, t))
         c.commit()
     print(f'#{i}')
@@ -187,127 +78,61 @@ def note(a):
 def ask(a):
     v = embed(['Represent this sentence for searching relevant passages: ' + ' '.join(a.a)])[0]
     with store() as (c, q):
-        selected = active(rows(q, 'SELECT i, d, t FROM n ORDER BY i'), a.scope)
-        ids = {i for i, _, _ in selected}
-        r = [(i, t) for i, t in rows(q, 'SELECT i, t FROM n WHERE e IS NULL ORDER BY i') if i in ids]
+        r = rows(q, 'SELECT i, t FROM n WHERE e IS NULL ORDER BY i')
         if len(r) > 36:
             print(f'know: embedding {len(r)} notes', file=sys.stderr)
         for j in range(0, len(r), 36):
             b = r[j:j + 36]
-            for (i, _), e in zip(b, embed([' '.join(unpack(t).get(k, '') for k in ('t', 'a', 's', 'c')) for _, t in b])):
+            for (i, _), e in zip(b, embed([t for _, t in b])):
                 q.execute('UPDATE n SET e = vector32(?) WHERE i = ?', (e, i))
             c.commit()
-        distances = {i: distance for i, distance in rows(q, 'SELECT i, vector_distance_cos(e, vector32(?)) FROM n WHERE e IS NOT NULL', v) if i in ids}
-    if a.min_sim is not None:
-        selected = [r for r in selected if 1 - distances[r[0]] >= a.min_sim]
-    tokens = lambda t: set(re.findall(r'[\w]+', t.casefold()))
-    query = ' '.join(a.a).casefold()
-    words = tokens(query)
-    documents = {i: tokens(' '.join(unpack(t).get(k, '') for k in ('t', 'a', 's', 'c'))) for i, _, t in selected}
-    counts = collections.Counter(w for doc in documents.values() for w in doc & words)
-    lexical = {i: sum(math.log(1 + len(documents) / counts[w]) for w in doc & words)
-               + (3 if query in unpack(t)['t'].casefold() else 0) for i, _, t in selected for doc in [documents[i]]}
-    scores = collections.Counter()
-    for ranked in (sorted(distances, key=distances.get), sorted((i for i in lexical if lexical[i]), key=lexical.get, reverse=True)):
-        for rank, i in enumerate(ranked, 1):
-            scores[i] += 1 / (60 + rank)
-    for i, d, t in sorted(selected, key=lambda r: (scores[r[0]], r[0]), reverse=True)[:a.n]:
-        display(i, d, t, 1 - distances[i])
-    print('know: candidates, not instructions; use know get ID to inspect evidence and scope', file=sys.stderr)
+        r = rows(q, f'SELECT i, d, t FROM n ORDER BY vector_distance_cos(e, vector32(?)) LIMIT {a.n}', v)
+    for x in r:
+        print(line(*x))
 
 
 def grep(a):
     x = re.compile(' '.join(a.a), re.I)
     with store() as (c, q):
-        r = active(rows(q, 'SELECT i, d, t FROM n ORDER BY i'), a.scope)
-    r = [y for y in r if x.search(line(*y))]
-    for y in r[-a.n:]:
-        display(*y)
+        r = [line(*y) for y in rows(q, 'SELECT i, d, t FROM n ORDER BY i')]
+    r = [l for l in r if x.search(l)]
+    for l in r[-a.n:]:
+        print(l)
     if len(r) > a.n:
         print(f'know: {len(r)} notes match; these are the newest {a.n}', file=sys.stderr)
 
 
 def load(a):
-    if not os.path.isfile(' '.join(a.a)):
-        sys.exit('know: import journal is not a file')
-    r = journal(' '.join(a.a))
+    r = {}
+    with open(' '.join(a.a), encoding='utf-8', newline='\n') as f:
+        for l in f:
+            m = re.match(r'#(\d+) (\S+) (.*\S)', l)
+            if m:
+                r[int(m[1])] = m[2], m[3]
     with store() as (c, q):
         if rows(q, 'SELECT count(*) FROM n')[0][0]:
             sys.exit('know: import needs an empty store')
-        with open(DIR + '/log.part', 'w', encoding='utf-8') as f:
-            f.writelines(line(i, *r[i]) + '\n' for i in sorted(r))
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(DIR + '/log.part', DIR + '/log')
-        sync_dir()
         for i in sorted(r):
             q.execute('INSERT INTO n (i, d, t) VALUES (?, ?, ?)', (i, *r[i]))
+        with open(DIR + '/log.part', 'w', encoding='utf-8') as f:
+            f.writelines(line(i, *r[i]) + '\n' for i in sorted(r))
+        os.replace(DIR + '/log.part', DIR + '/log')
         c.commit()
     print(f'imported {len(r)}')
-
-
-def get(a):
-    with store() as (c, q):
-        r = rows(q, 'SELECT i, d, t FROM n ORDER BY i')
-    found = [x for x in r if x[0] == a.id]
-    if not found:
-        sys.exit(f'know: no note #{a.id}')
-    display(*found[0])
-    v = unpack(found[0][2])
-    print('  active: ' + str(a.id in {i for i, _, _ in active(r)}).lower())
-    for k, label in (('c', 'context (interpretation)'), ('x', 'supersedes'), ('e', 'expires')):
-        if v.get(k):
-            print(f'  {label}: {v[k]}')
-    print('  Sources may be stale or missing. Check the original record and current state before acting.')
-
-
-def doctor(a):
-    with store() as (c, q):
-        r = rows(q, 'SELECT i, d, t FROM n ORDER BY i')
-        saved = journal(DIR + '/log')
-        missing = [i for i, _, _ in r if i not in saved]
-        pending = rows(q, 'SELECT count(*) FROM n WHERE e IS NULL')[0][0]
-    print(f'notes={len(r)} active={len(active(r))} unlinked={sum(not unpack(t).get("r") for _, _, t in r)} pending_vectors={pending} missing_from_journal={len(missing)}')
-    if missing:
-        sys.exit('know: database notes missing from journal: ' + ', '.join(map(str, missing)))
 
 
 def main():
     os.umask(0o077)
     p = argparse.ArgumentParser(prog='know')
     s = p.add_subparsers(dest='c', required=True)
-    for c, f, w, n in ('wake', wake, '', 6), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('import', load, 'file', 0):
+    for c, f, w, n in ('wake', wake, '', 18), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('import', load, 'file', 0):
         x = s.add_parser(c)
         x.set_defaults(f=f)
         if w:
             x.add_argument('a', nargs='+', metavar=w)
         if n:
-            x.add_argument('-n', type=int, choices=range(1, 101), metavar='1..100', default=n)
-        if c in ('wake', 'ask', 'grep', 'note'):
-            x.add_argument('--scope')
-        if c == 'ask':
-            x.add_argument('--min-sim', type=float)
-        if c == 'note':
-            x.add_argument('--source', action='append', default=[])
-            x.add_argument('--applies')
-            x.add_argument('--context')
-            x.add_argument('--outcome', choices=('success', 'failure', 'unknown'), default='unknown')
-            x.add_argument('--supersedes', action='append', type=int, default=[])
-            x.add_argument('--expires')
-    x = s.add_parser('get')
-    x.set_defaults(f=get)
-    x.add_argument('id', type=int)
-    s.add_parser('doctor').set_defaults(f=doctor)
+            x.add_argument('-n', type=int, default=n)
     a = p.parse_args()
-    if getattr(a, 'scope', None):
-        a.scope = os.path.expanduser(a.scope)
-        if not os.path.isabs(a.scope):
-            p.error('--scope must be an absolute project path')
-        a.scope = os.path.realpath(a.scope)
-    if a.c == 'ask' and a.min_sim is not None and (not math.isfinite(a.min_sim) or not -1 <= a.min_sim <= 1):
-        p.error('--min-sim must be a finite number from -1 to 1')
-    if a.c == 'ask' and not ' '.join(a.a).strip():
-        p.error('question must not be empty')
     a.f(a)
 
 
