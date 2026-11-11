@@ -1,0 +1,143 @@
+#!/home/ed/.venvs/know/bin/python
+import argparse, contextlib, datetime, fcntl, json, os, re, sys, time
+
+DIR = os.environ.get('KNOW_DIR') or os.path.expanduser('~/.know')
+MODEL = os.path.expanduser('~/models/arctic-embed-xs')
+line = '#{} {} {}'.format
+model = None
+
+
+def embed(texts):
+    global model
+    import numpy, onnxruntime, tokenizers
+    if not model:
+        k = tokenizers.Tokenizer.from_file(MODEL + '/tokenizer.json')
+        k.enable_truncation(288)
+        k.enable_padding()
+        o = onnxruntime.SessionOptions()
+        o.intra_op_num_threads = 4
+        model = k, onnxruntime.InferenceSession(MODEL + '/model.onnx', o, providers=['CPUExecutionProvider'])
+    k, s = model
+    b = k.encode_batch(texts)
+    f = {'input_ids': [x.ids for x in b], 'attention_mask': [x.attention_mask for x in b], 'token_type_ids': [x.type_ids for x in b]}
+    h = s.run(None, {i.name: numpy.array(f[i.name], 'int64') for i in s.get_inputs()})[0][:, 0]
+    return [json.dumps(v.tolist(), separators=(',', ':')) for v in h / numpy.linalg.norm(h, axis=1, keepdims=True)]
+
+
+@contextlib.contextmanager
+def store():
+    import turso
+    os.makedirs(DIR, exist_ok=True)
+    with open(DIR + '/lock', 'w') as l:
+        fcntl.flock(l, fcntl.LOCK_EX)
+        for j in range(180):
+            try:
+                c = turso.connect(DIR + '/db')
+                q = c.cursor()
+                # n = note: i id, d date, t text, e vector (NULL until the next ask)
+                q.execute('CREATE TABLE IF NOT EXISTS n (i INTEGER PRIMARY KEY, d TEXT NOT NULL, t TEXT NOT NULL, e BLOB)')
+                break
+            except turso.DatabaseError as e:
+                # Turso keeps its own file lock until the last holder exits, a few ms after that process drops the flock
+                if 'Locking error' not in str(e) or j == 179:
+                    raise
+                time.sleep(0.05)
+        try:
+            yield c, q
+        finally:
+            c.close()
+
+
+def rows(q, sql, *a):
+    q.execute(sql, a)
+    return q.fetchall()
+
+
+def wake(a):
+    with store() as (c, q):
+        r = rows(q, f'SELECT i, d, t FROM n ORDER BY i DESC LIMIT {a.n}')
+    for x in r[::-1]:
+        print(line(*x))
+
+
+def note(a):
+    t = ' '.join(' '.join(a.a).split())
+    if not 0 < len(t) <= 280:
+        sys.exit(f'know: the note has {len(t)} chars; the limit is 280')
+    d = datetime.date.today().isoformat()
+    with store() as (c, q):
+        i = rows(q, 'SELECT coalesce(max(i), -1) + 1 FROM n')[0][0]
+        # journal first: it must hold every note that the db holds
+        with open(DIR + '/log', 'a', encoding='utf-8') as f:
+            f.write(line(i, d, t) + '\n')
+        q.execute('INSERT INTO n (i, d, t) VALUES (?, ?, ?)', (i, d, t))
+        c.commit()
+    print(f'#{i}')
+
+
+def ask(a):
+    v = embed(['Represent this sentence for searching relevant passages: ' + ' '.join(a.a)])[0]
+    with store() as (c, q):
+        r = rows(q, 'SELECT i, t FROM n WHERE e IS NULL ORDER BY i')
+        if len(r) > 36:
+            print(f'know: embedding {len(r)} notes', file=sys.stderr)
+        for j in range(0, len(r), 36):
+            b = r[j:j + 36]
+            for (i, _), e in zip(b, embed([t for _, t in b])):
+                q.execute('UPDATE n SET e = vector32(?) WHERE i = ?', (e, i))
+            c.commit()
+        r = rows(q, f'SELECT i, d, t FROM n ORDER BY vector_distance_cos(e, vector32(?)) LIMIT {a.n}', v)
+    for x in r:
+        print(line(*x))
+
+
+def grep(a):
+    x = re.compile(' '.join(a.a), re.I)
+    with store() as (c, q):
+        r = [line(*y) for y in rows(q, 'SELECT i, d, t FROM n ORDER BY i')]
+    r = [l for l in r if x.search(l)]
+    for l in r[-a.n:]:
+        print(l)
+    if len(r) > a.n:
+        print(f'know: {len(r)} notes match; these are the newest {a.n}', file=sys.stderr)
+
+
+def load(a):
+    r = {}
+    with open(' '.join(a.a), encoding='utf-8', newline='\n') as f:
+        for l in f:
+            m = re.match(r'#(\d+) (\S+) (.*\S)', l)
+            if m:
+                r[int(m[1])] = m[2], m[3]
+    with store() as (c, q):
+        if rows(q, 'SELECT count(*) FROM n')[0][0]:
+            sys.exit('know: import needs an empty store')
+        for i in sorted(r):
+            q.execute('INSERT INTO n (i, d, t) VALUES (?, ?, ?)', (i, *r[i]))
+        with open(DIR + '/log.part', 'w', encoding='utf-8') as f:
+            f.writelines(line(i, *r[i]) + '\n' for i in sorted(r))
+        os.replace(DIR + '/log.part', DIR + '/log')
+        c.commit()
+    print(f'imported {len(r)}')
+
+
+def main():
+    os.umask(0o077)
+    p = argparse.ArgumentParser(prog='know')
+    s = p.add_subparsers(dest='c', required=True)
+    for c, f, w, n in ('wake', wake, '', 18), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('import', load, 'file', 0):
+        x = s.add_parser(c)
+        x.set_defaults(f=f)
+        if w:
+            x.add_argument('a', nargs='+', metavar=w)
+        if n:
+            x.add_argument('-n', type=int, default=n)
+    a = p.parse_args()
+    a.f(a)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        sys.exit(f'know: {type(e).__name__}: {e}')

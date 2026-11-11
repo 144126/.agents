@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+here=$(dirname "$(readlink -f "$0")")
+py=$HOME/.venvs/know/bin/python
+dir=$HOME/models/arctic-embed-xs
+base=https://huggingface.co/Snowflake/snowflake-arctic-embed-xs/resolve/d8c86521100d3556476a063fc2342036d45c106f
+
+fetch() {
+	echo "$3  $dir/$2" | sha256sum -c - >/dev/null 2>&1 && return
+	curl -fL --retry 3 -o "$dir/$2.part" "$base/$1"
+	echo "$3  $dir/$2.part" | sha256sum -c - >/dev/null
+	mv "$dir/$2.part" "$dir/$2"
+}
+
+[ -x "$py" ] || uv venv "$HOME/.venvs/know" --python /usr/bin/python3.11
+uv pip install --python "$py" --no-deps -r "$here/../requirements.txt"
+mkdir -p "$dir"
+fetch onnx/model_uint8.onnx model.onnx 9295adb7774fe42f62fec11ad8cd07ed80c6b3ea112b2b737c683f562469b21b
+fetch tokenizer.json tokenizer.json 91f1def9b9391fdabe028cd3f3fcc4efd34e5d1f08c3bf2de513ebb5911a1854
+ln -sfn "$here/know" "$HOME/.local/bin/know"

@@ -1,0 +1,8 @@
+pyturso==0.8.3 --hash=sha256:8ad417fb991351daf9fd6fbd984f16504da3f398137653a2b89cefed03d18616
+typing-extensions==4.16.0
+onnxruntime==1.31.0
+numpy==2.4.6
+flatbuffers==25.12.19
+protobuf==7.36.2
+packaging==26.3
+tokenizers==0.22.2
