@@ -15,6 +15,7 @@ uv run --script ~/.agents/skills/delphi/delphi.py snap now|next --asset btc|eth|
 uv run --script ~/.agents/skills/delphi/delphi.py edge --asset btc --window 5m --days 30
 uv run --script ~/.agents/skills/delphi/delphi.py log --slug <slug> --p 0.55 --side up|down|none --price 0.50 --note "..."
 uv run --script ~/.agents/skills/delphi/delphi.py score
+uv run --script ~/.agents/skills/delphi/swing.py   # gold 1m swing: spot-term levels, zigzag $3/$5/$8 leg state with 60-day analog odds, same-minute seasonality, perp book and flow (~30 s)
 uv run --script ~/.agents/skills/delphi/delphi.py snipe [--legs btc/5m/30/0.85/0.95/-1/l,eth/5m/30/0.85/0.95/-1/l,btc/15m/90/0.85/0.95/-1/p --usd 1 --frac 0.05]   # each leg = asset/window/tau/lo/hi/mg/l|p: first time the favourite ask is in [lo, hi) with <= tau s left; mg -1 = no filter; p = paper only; live needs ~/.config/delphi/LIVE
 uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (tau/lo/hi/mg) and live fills
 ```
