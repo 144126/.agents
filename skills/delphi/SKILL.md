@@ -107,7 +107,8 @@ uv run --script ~/.agents/skills/delphi/delphi.py snipe-score   # per rule tag (
 - rtds sends an empty first frame; skip it or the stream aborts.
 - gamma `orderPriceMinTickSize` says 0.001, but the live book steps by 0.01.
 - gamma `fee` can be null (xau); use `feeSchedule`.
-- binance usd-m has no 1s klines; gold 1s comes from paxg spot. `openInterestHist` can be empty for the gold perp, which prints NA.
+- binance usd-m has no 1s klines; gold 1s comes from paxg spot.
+- the binance xau index is not spot: it ran $4.8-5.3 above Swissquote XAU/USD on 2026-11-12. Quote broker levels from `curl -s https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD` (no key). Yahoo 1m futures lag ~10 min. `openInterestHist` can be empty for the gold perp, which prints NA.
 - a thin book reads 0.01/0.99 (spread 0.98). that is no market.
 - a failed feed used to mix the strike's source with the live price's source. in the fault tests this produced fake +30-point edges.
   - snap now tags each price's source family and prints `MIXED SOURCES ...: no bet` on any mismatch.
