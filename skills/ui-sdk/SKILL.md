@@ -57,5 +57,6 @@ Every path ends the same way:
 
 ## Traps
 
+- Sass requires `@use` before `@layer ui-sdk;`. Put the layer immediately after the last `@use`.
 - Autocomplete `valuechange` with reason `item-press` reports the row's text in `detail.value`, not the item's `value`. To act on the row, read `detail.event.target.closest("ui-autocomplete-item")`, or the `[data-highlighted]` item when Enter chose it, then `preventDefault()` and `api.clear()`.
 - A page with no build step shows bare controls until `web.js` upgrades them. Write `data-slot` on the native input and buttons in the markup, so `web.css` styles them from the first paint.
