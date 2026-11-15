@@ -180,21 +180,34 @@ def wake(arguments):
             print(display(records[i], replaced))
 
 
-def note(arguments):
+def save(connection, cursor, records, arguments):
     text = ' '.join(' '.join(arguments.a).split())
     if not 0 < len(text) <= 280:
         raise ValueError(f'the note has {len(text)} chars; the limit is 280')
+    if len(set(arguments.replaces)) != len(arguments.replaces) or any(i not in records for i in arguments.replaces):
+        raise ValueError('--replaces must name distinct existing note IDs')
+    record = {'i': max(records, default=-1) + 1, 'd': datetime.date.today().isoformat(), 't': text, 'k': arguments.kind[0], 'x': arguments.replaces}
+    append([record])
+    try:
+        insert(cursor, record)
+        connection.commit()
+    except Exception as error:
+        raise RuntimeError(f'#{record["i"]} is saved in the journal; the next command will replay it: {error}') from error
+    return record['i']
+
+
+def note(arguments):
     with store() as (connection, cursor, records, _):
-        if len(set(arguments.replaces)) != len(arguments.replaces) or any(i not in records for i in arguments.replaces):
-            raise ValueError('--replaces must name distinct existing note IDs')
-        record = {'i': max(records, default=-1) + 1, 'd': datetime.date.today().isoformat(), 't': text, 'k': arguments.kind[0], 'x': arguments.replaces}
-        append([record])
-        try:
-            insert(cursor, record)
-            connection.commit()
-        except Exception as error:
-            raise RuntimeError(f'#{record["i"]} is saved in the journal; the next command will replay it: {error}') from error
-    print(f'#{record["i"]}')
+        print(f'#{save(connection, cursor, records, arguments)}')
+
+
+def start(arguments):
+    with store() as (connection, cursor, records, _):
+        replaced = {i for record in records.values() for i in record['x']}
+        # Print the newest notes from before this save so the new note does not take a slot.
+        for i in sorted(records)[-arguments.n:]:
+            print(display(records[i], replaced))
+        print(f'saved #{save(connection, cursor, records, arguments)}')
 
 
 def ask(arguments):
@@ -309,15 +322,15 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(prog='know')
     commands = parser.add_subparsers(dest='c', required=True)
-    for name, function, word, count in (('wake', wake, '', 18), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('import', load, 'file', 0), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
+    for name, function, word, count in (('wake', wake, '', 18), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('start', start, 'text', 18), ('import', load, 'file', 0), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
         command = commands.add_parser(name)
         command.set_defaults(f=function)
         if word:
             command.add_argument('a', nargs='+', metavar=word)
         if count:
             command.add_argument('-n', type=positive_int, default=count)
-        if name == 'note':
-            command.add_argument('--kind', choices=('fact', 'activity'), default='fact')
+        if name in ('note', 'start'):
+            command.add_argument('--kind', choices=('fact', 'activity'), default='activity' if name == 'start' else 'fact')
             command.add_argument('--replaces', type=int, action='append', default=[], metavar='ID')
         if name == 'ask':
             command.add_argument('--min-score', type=similarity, default=minimum_similarity)
