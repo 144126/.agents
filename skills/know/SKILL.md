@@ -12,13 +12,10 @@ The append-only journal is authoritative. A Turso database indexes its notes and
 - `know note --kind activity "<request or outcome>"`: record turn activity. Keep the required start/end writes; save lasting facts separately.
 - `know note "<verified fact>"`: save one fact, at most 280 chars.
 - `know note --replaces 12 --replaces 18 "<verified replacement>"`: retire named notes from factual recall. Old notes remain in history. Name only notes this statement actually replaces.
-- `know ask [-n 9] [--min-score 0.60] "<question>"`: search current facts. Matches need both semantic similarity and a meaningful query word in the note. Results show cosine similarity, not a probability of correctness. It reports no strong match when no candidate passes.
-- `know ask --semantic-only "<paraphrase>"`: allow matches without shared words. Use this for broader discovery or a paraphrase the default search misses; lower `--min-score` explicitly when needed.
-- `know wake [-n 18]`: recent notes in time order, including activity and replaced notes, with labels.
+- `know ask [-n 9] "<question>"`: search current facts. Matches need both semantic similarity and a meaningful query word in the note. Results show cosine similarity, not a probability of correctness. It reports no strong match when no candidate passes.
 - `know grep [-n 18] <regex>`: search all note history, case ignored; activity and replaced notes are labeled.
-- `know doctor [--check-vectors]`: validate the complete journal and index, replay missing notes, and check index integrity. The optional check compares sample embeddings with the current model, allowing for quantization variation.
+- `know doctor`: validate the complete journal and index, replay missing notes, and check index integrity.
 - `know rebuild`: validate the journal, build and check a replacement index, then install it. The journal stays unchanged; embeddings regenerate on the next `ask`.
-- `know import <file>`: validate a legacy or JSON-lines journal and import it into an empty store. Conflicting IDs and incomplete records are refused; the source stays unchanged.
 - `skills/know/bin/setup`: build the venv and fetch the model. Safe to run again.
 
 ## Files

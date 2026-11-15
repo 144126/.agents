@@ -173,13 +173,6 @@ def display(record, replaced=None):
     return line(record['i'], record['d'], record['t']) + (' [activity]' if replaced is not None and record['k'] == 'a' else '') + (' [replaced]' if replaced is not None and record['i'] in replaced else '')
 
 
-def wake(arguments):
-    with store() as (_, _, records, _):
-        replaced = {i for record in records.values() for i in record['x']}
-        for i in sorted(records)[-arguments.n:]:
-            print(display(records[i], replaced))
-
-
 def save(connection, cursor, records, arguments):
     text = ' '.join(' '.join(arguments.a).split())
     if not 0 < len(text) <= 280:
@@ -225,12 +218,12 @@ def ask(arguments):
         query_words = words(' '.join(arguments.a))
         matches = []
         for i, distance in rows(cursor, 'SELECT i, vector_distance_cos(e, vector32(?)) AS d FROM n WHERE e IS NOT NULL ORDER BY d, i DESC', vector):
-            if i in eligible and 1 - distance >= arguments.min_score and (getattr(arguments, 'semantic_only', False) or query_words & words(records[i]['t'])):
+            if i in eligible and 1 - distance >= minimum_similarity and query_words & words(records[i]['t']):
                 matches.append((i, 1 - distance))
         for i, score in matches[:arguments.n]:
             print(f'{display(records[i])} [similarity {score:.3f}]')
         if not matches:
-            print(f'know: no strong match (minimum similarity {arguments.min_score:g}); verify another source')
+            print(f'know: no strong match (minimum similarity {minimum_similarity:g}); verify another source')
 
 
 def grep(arguments):
@@ -244,34 +237,12 @@ def grep(arguments):
         print(f'know: {len(matches)} notes match; these are the newest {arguments.n}', file=sys.stderr)
 
 
-def load(arguments):
-    path = ' '.join(arguments.a)
-    if not os.path.isfile(path):
-        raise ValueError(f'import file does not exist: {path}')
-    imported = read_journal(path)
-    with store() as (connection, cursor, records, _):
-        if records:
-            raise ValueError('import needs an empty store')
-        append([imported[i] for i in sorted(imported)])
-        for i in sorted(imported):
-            insert(cursor, imported[i])
-        connection.commit()
-    print(f'imported {len(imported)}')
-
-
 def doctor(arguments):
     with store() as (_, cursor, records, replayed):
         result = rows(cursor, 'PRAGMA integrity_check')
         if result != [('ok',)]:
             raise ValueError(f'index integrity check failed: {result}; run know rebuild')
         eligible = current_facts(records)
-        if getattr(arguments, 'check_vectors', False):
-            candidates = [i for i, in rows(cursor, 'SELECT i FROM n WHERE e IS NOT NULL ORDER BY i') if i in eligible]
-            sample = sorted({candidates[0], candidates[len(candidates) // 2], candidates[-1]}) if candidates else []
-            for i, vector in zip(sample, embed([records[i]['t'] for i in sample]) if sample else []):
-                distance = rows(cursor, 'SELECT vector_distance_cos(e, vector32(?)) FROM n WHERE i = ?', vector, i)[0][0]
-                if distance > 0.01:
-                    raise ValueError(f'embedding for #{i} differs from the current model (cosine distance {distance:.3f}); run know rebuild')
         print(f'ok: {len(records)} notes, {len(eligible)} current facts, {sum(r["k"] == "a" for r in records.values())} activity; replayed {replayed}')
 
 
@@ -312,17 +283,11 @@ def positive_int(value):
     return int(value)
 
 
-def similarity(value):
-    if not -1 <= float(value) <= 1:
-        raise argparse.ArgumentTypeError('must be between -1 and 1')
-    return float(value)
-
-
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(prog='know')
     commands = parser.add_subparsers(dest='c', required=True)
-    for name, function, word, count in (('wake', wake, '', 18), ('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('start', start, 'text', 18), ('import', load, 'file', 0), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
+    for name, function, word, count in (('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('start', start, 'text', 18), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
         command = commands.add_parser(name)
         command.set_defaults(f=function)
         if word:
@@ -332,11 +297,6 @@ def main():
         if name in ('note', 'start'):
             command.add_argument('--kind', choices=('fact', 'activity'), default='activity' if name == 'start' else 'fact')
             command.add_argument('--replaces', type=int, action='append', default=[], metavar='ID')
-        if name == 'ask':
-            command.add_argument('--min-score', type=similarity, default=minimum_similarity)
-            command.add_argument('--semantic-only', action='store_true')
-        if name == 'doctor':
-            command.add_argument('--check-vectors', action='store_true')
     arguments = parser.parse_args()
     arguments.f(arguments)
 

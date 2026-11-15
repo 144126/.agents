@@ -22,6 +22,10 @@ class KnowTests(unittest.TestCase):
         self.know.directory = self.temporary.name
         self.path = Path(self.temporary.name)
 
+    def ask_all(self, **arguments):
+        with patch.object(self.know, 'minimum_similarity', -1):
+            return self.call('ask', **arguments)
+
     def call(self, function, **arguments):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -37,7 +41,7 @@ class KnowTests(unittest.TestCase):
                 self.note('first note must survive')
         self.assertEqual(self.note('second note'), '#1\n')
         self.assertEqual(len(self.know.read_journal(str(self.path / 'log'))), 2)
-        self.assertIn('first note must survive', self.call('wake', n=18))
+        self.assertIn('first note must survive', self.call('grep', a=['.'], n=18))
         self.assertIn('2 notes', self.call('doctor'))
 
     def test_failed_journal_sync_reports_uncertainty_and_doctor_confirms_replay(self):
@@ -78,34 +82,6 @@ class KnowTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.call('doctor')
             self.assertFalse((self.path / 'db').exists())
-
-    def test_import_rejects_invalid_sources_without_partial_import(self):
-        with tempfile.TemporaryDirectory(prefix='know-source-') as directory:
-            source = Path(directory) / 'source'
-            for content in ('#0 2026-11-14 valid\nbroken\n', '#0 2026-11-14 valid\n#1 2026-11-14 partial', '#0 2026-11-14 one\n#0 2026-11-14 two\n'):
-                source.write_text(content)
-                with self.assertRaises(ValueError):
-                    self.call('load', a=[str(source)])
-                self.assertFalse((self.path / 'log').exists())
-                self.assertEqual(source.read_text(), content)
-
-    def test_legacy_import_and_identical_duplicates_preserve_long_notes(self):
-        with tempfile.TemporaryDirectory(prefix='know-source-') as directory:
-            source = Path(directory) / 'source'
-            content = '#0 2026-11-14 ' + 'long legacy note ' * 25 + '\n'
-            source.write_text(content * 2)
-            self.assertEqual(self.call('load', a=[str(source)]), 'imported 1\n')
-            self.assertEqual(source.read_text(), content * 2)
-            self.assertIn('long legacy note', self.call('wake', n=18))
-
-    def test_import_cannot_overwrite_an_unindexed_journal(self):
-        (self.path / 'log').write_text('#0 2026-11-14 existing\n')
-        with tempfile.TemporaryDirectory(prefix='know-source-') as directory:
-            source = Path(directory) / 'source'
-            source.write_text('#0 2026-11-14 imported\n')
-            with self.assertRaisesRegex(ValueError, 'empty store'):
-                self.call('load', a=[str(source)])
-        self.assertIn('existing', self.call('wake', n=18))
 
     def test_replacements_must_exist_and_cannot_repeat(self):
         self.note('old fact')
@@ -160,11 +136,11 @@ class KnowTests(unittest.TestCase):
         self.note('old fact')
         self.note('new fact', replaces=[0])
         self.note('start of a turn', kind='activity')
-        history = self.call('wake', n=18)
+        history = self.call('grep', a=['.'], n=18)
         self.assertIn('old fact [replaced]', history)
         self.assertIn('start of a turn [activity]', history)
         self.assertIn('old fact [replaced]', self.call('grep', a=['old fact'], n=18))
-        self.call('ask', a=['new fact'], n=1, min_score=-1)
+        self.ask_all(a=['new fact'], n=1)
         with self.know.store() as (_, cursor, _, _):
             self.assertEqual(self.know.rows(cursor, 'SELECT i FROM n WHERE e IS NOT NULL'), [(1,)])
 
@@ -174,7 +150,7 @@ class KnowTests(unittest.TestCase):
         output = self.call('start', a=['session intent'], kind='activity', replaces=[], n=2)
         self.assertEqual(output.splitlines()[:2], ['#2 ' + self.know.datetime.date.today().isoformat() + ' note 2', '#3 ' + self.know.datetime.date.today().isoformat() + ' note 3'])
         self.assertEqual(output.splitlines()[2], 'saved #4')
-        self.assertIn('session intent [activity]', self.call('wake', n=1))
+        self.assertIn('session intent [activity]', self.call('grep', a=['.'], n=1))
 
     def test_concurrent_writers_get_unique_ids(self):
         environment = dict(os.environ, KNOW_DIR=str(self.path), PYTHONDONTWRITEBYTECODE='1')
@@ -196,39 +172,22 @@ class KnowTests(unittest.TestCase):
         positives = [('How do I start T3 Code normally?', 1), ('Where are know rules written?', 2), ('Which port does the agent browser use?', 3), ('Where do I edit Sway settings?', 4), ('Which JavaScript package manager should I use?', 5), ('How long is the voice phrase silence timeout?', 6)]
         for query, expected in positives:
             with self.subTest(query=query):
-                result = self.call('ask', a=[query], n=1, min_score=self.know.minimum_similarity)
+                result = self.call('ask', a=[query], n=1)
                 self.assertTrue(result.startswith(f'#{expected} '), result)
         for query in ('What is the PostgreSQL backup schedule on Mars?', 'What is the name of my pet iguana?', 'Which dentist appointment did I book for Tuesday?', 'Where is the backup schedule for our Oracle database?', "Where is Ed's ukulele kept?"):
             with self.subTest(query=query):
-                self.assertIn('no strong match', self.call('ask', a=[query], n=9, min_score=self.know.minimum_similarity))
-        result = self.call('ask', a=['Where are know rules written?'], n=9, min_score=-1)
+                self.assertIn('no strong match', self.call('ask', a=[query], n=9))
+        result = self.ask_all(a=['Where are know rules written?'], n=9)
         self.assertNotIn('#0 ', result)
         self.assertNotIn('#7 ', result)
 
     def test_replaced_neighbours_cannot_crowd_out_current_facts(self):
         for i in range(12):
             self.note(f'T3 Code pxpipe launcher setup revision {i}')
-        self.call('ask', a=['T3 Code pxpipe launcher setup'], n=9, min_score=-1)
+        self.ask_all(a=['T3 Code pxpipe launcher setup'], n=9)
         self.note('T3 Code opens normally; pxpipe was removed.', replaces=range(12))
-        result = self.call('ask', a=['T3 Code pxpipe launcher setup'], n=1, min_score=-1)
+        result = self.ask_all(a=['T3 Code pxpipe launcher setup'], n=1)
         self.assertTrue(result.startswith('#12 '), result)
-
-    def test_semantic_only_allows_a_paraphrase_without_shared_words(self):
-        self.note('Purchase provisions before departure.')
-        query = 'Buy groceries ahead of leaving.'
-        self.assertIn('no strong match', self.call('ask', a=[query], n=1, min_score=-1))
-        self.assertTrue(self.call('ask', a=[query], n=1, min_score=-1, semantic_only=True).startswith('#0 '))
-
-    def test_doctor_detects_stale_embeddings(self):
-        self.note('Agent Chrome runs headless on port 9223.')
-        self.call('ask', a=['Agent Chrome port'], n=1, min_score=-1)
-        self.assertIn('ok:', self.call('doctor', check_vectors=True))
-        vector = json.loads(self.know.embed(['Agent Chrome runs headless on port 9223.'])[0])
-        with self.know.store() as (connection, cursor, _, _):
-            cursor.execute('UPDATE n SET e = vector32(?) WHERE i = 0', (json.dumps([-v for v in vector]),))
-            connection.commit()
-        with self.assertRaisesRegex(ValueError, 'differs from the current model'):
-            self.call('doctor', check_vectors=True)
 
 
 if __name__ == '__main__':
