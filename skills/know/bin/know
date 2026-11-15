@@ -194,13 +194,14 @@ def note(arguments):
         print(f'#{save(connection, cursor, records, arguments)}')
 
 
-def start(arguments):
+def me(arguments):
     with store() as (connection, cursor, records, _):
         replaced = {i for record in records.values() for i in record['x']}
         # Print the newest notes from before this save so the new note does not take a slot.
         for i in sorted(records)[-arguments.n:]:
             print(display(records[i], replaced))
-        print(f'saved #{save(connection, cursor, records, arguments)}')
+        if arguments.a:
+            print(f'saved #{save(connection, cursor, records, arguments)}')
 
 
 def ask(arguments):
@@ -287,15 +288,15 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(prog='know')
     commands = parser.add_subparsers(dest='c', required=True)
-    for name, function, word, count in (('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('start', start, 'text', 18), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
+    for name, function, word, count in (('ask', ask, 'question', 9), ('grep', grep, 'regex', 18), ('note', note, 'text', 0), ('me', me, 'text', 18), ('doctor', doctor, '', 0), ('rebuild', rebuild, '', 0)):
         command = commands.add_parser(name)
         command.set_defaults(f=function)
         if word:
-            command.add_argument('a', nargs='+', metavar=word)
+            command.add_argument('a', nargs='*' if name == 'me' else '+', metavar=word)
         if count:
             command.add_argument('-n', type=positive_int, default=count)
-        if name in ('note', 'start'):
-            command.add_argument('--kind', choices=('fact', 'activity'), default='activity' if name == 'start' else 'fact')
+        if name in ('note', 'me'):
+            command.add_argument('--kind', choices=('fact', 'activity'), default='activity' if name == 'me' else 'fact')
             command.add_argument('--replaces', type=int, action='append', default=[], metavar='ID')
     arguments = parser.parse_args()
     arguments.f(arguments)

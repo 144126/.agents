@@ -8,8 +8,8 @@ description: Shared agent memory with local semantic recall. Use to record turn 
 The append-only journal is authoritative. A Turso database indexes its notes and embeddings. Use the CLI for all live store operations; never hand-edit `~/.know` or open its database with another tool.
 
 ## Commands
-- `know start [-n 18] "<request and intent>"`: session/turn start in one call. Prints the 18 newest notes from before this call, then saves the argument as an activity note (`saved #N`). Takes `--kind` and `--replaces` like `note`.
-- `know note --kind activity "<request or outcome>"`: record turn activity. Keep the required start/end writes; save lasting facts separately.
+- `know me [-n 18] ["<turn activity>"]`: print the 18 newest notes, then save the optional text as an activity note (`saved #N`). Takes `--kind` and `--replaces` like `note`. Run with the request and intent at the start of every turn and the outcome, decisions, and open work at the end.
+- `know note --kind activity "<activity>"`: record other activity; save lasting facts separately.
 - `know note "<verified fact>"`: save one fact, at most 280 chars.
 - `know note --replaces 12 --replaces 18 "<verified replacement>"`: retire named notes from factual recall. Old notes remain in history. Name only notes this statement actually replaces.
 - `know ask [-n 9] "<question>"`: search current facts. Matches need both semantic similarity and a meaningful query word in the note. Results show cosine similarity, not a probability of correctness. It reports no strong match when no candidate passes.

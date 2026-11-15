@@ -144,10 +144,10 @@ class KnowTests(unittest.TestCase):
         with self.know.store() as (_, cursor, _, _):
             self.assertEqual(self.know.rows(cursor, 'SELECT i FROM n WHERE e IS NOT NULL'), [(1,)])
 
-    def test_start_prints_prior_newest_notes_then_saves(self):
+    def test_me_prints_prior_newest_notes_then_saves(self):
         for i in range(4):
             self.note(f'note {i}')
-        output = self.call('start', a=['session intent'], kind='activity', replaces=[], n=2)
+        output = self.call('me', a=['session intent'], kind='activity', replaces=[], n=2)
         self.assertEqual(output.splitlines()[:2], ['#2 ' + self.know.datetime.date.today().isoformat() + ' note 2', '#3 ' + self.know.datetime.date.today().isoformat() + ' note 3'])
         self.assertEqual(output.splitlines()[2], 'saved #4')
         self.assertIn('session intent [activity]', self.call('grep', a=['.'], n=1))
