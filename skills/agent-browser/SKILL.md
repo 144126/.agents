@@ -25,8 +25,8 @@ Cold start ~4.6 s, warm call ~0.45 s (ab-1440fl, 2026-11-17): keep it warm, keep
 
 `~/i/abx` (github 144126/abx). `abr` = agent-browser in Ed's real Chrome through the "abx bridge" extension: no inspect toggle, no Allow prompt. Every agent-browser command works (`abr open|snapshot|click|screenshot|tab ...`).
 
-- It sees only tabs it opened (collapsed grey "agent" group, in the background; screenshots work there), their popups (OAuth), and tabs Ed shares with the toolbar button (badge "on"). Ed's own tab: ask him to click the button, then `abr tab list`.
-- `abx bridge not connected`: Chrome isn't open, or the extension isn't loaded. Ed does it once: chrome://extensions > Developer mode > Load unpacked > `~/i/abx/ext`. After editing `ext/`, Ed clicks reload on that card.
+- It sees only tabs it opened (in its own visible "agent" Chrome window, which opens without taking focus), their popups (OAuth), and tabs Ed shares with the toolbar button (badge "on"). Keep that window on Ed's current workspace: headed Chrome stops drawing hidden windows and background tabs (rAF stalls, clicks wait 5 s). Shared tabs work only while Ed has them in front.
+- `abx bridge not connected`: Chrome isn't open, or the extension isn't loaded. Ed does it once: chrome://extensions > Developer mode > Load unpacked > `~/i/abx/ext`. After editing `ext/`, Ed clicks reload on that card (Chrome also reloads it on restart).
 - Never `abr close` (it closes only agent tabs, but don't anyway). Act only on what Ed asked.
 
 Same three verbs on any session (`ab-1440fl` and `abr` switch the view for you; ab-1440fl turns headless→visible→headless and keeps logins):
