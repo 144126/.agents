@@ -97,7 +97,7 @@ Why: Google kills sessions copied between browsers. `--password-store=basic` on 
 
 ## Traps
 
-- A click that navigates takes a flat ~5 s (0.43.0, upstream): `eval 'document.querySelector("<sel>").click()'` then `wait --url '**<part>**'`.
+- A click that navigates takes a flat ~5 s (seen on ab-1440fl's long-used tab, 0.43.0; stock agent-browser and fresh tabs ~0.1 s; cause unknown, gone after `tab new`): `tab new <url>` and continue there.
 - `tab_gone` after the browser restarted: the daemon stays bound to the dead tab. `kill $(cat $XDG_RUNTIME_DIR/agent-browser/<session>.pid)`, rerun (`abr`, `ab-1440fl show|hide` do it themselves).
 - `--url` is a full-URL glob: `**/iana.org/**` misses `https://www.iana.org/help`; use `**iana.org**`.
 - `wait --fn` must return a boolean (`!!document.querySelector("x")`). `wait --text` sees visible text only, not alt names; grep the snapshot.
