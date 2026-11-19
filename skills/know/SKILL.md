@@ -1,35 +1,28 @@
 ---
 name: know
-description: Shared agent memory with local semantic recall. Use to record turn activity, save verified facts, replace outdated notes, recall current facts, or search note history.
+description: Shared agent memory with local semantic recall, stored as rope lines. Use to record turn activity, save verified facts, replace outdated notes, recall current facts, or search note history.
 ---
 
 # know
 
-The append-only journal is authoritative. A Turso database indexes its notes and embeddings. Use the CLI for all live store operations; never hand-edit `~/.know` or open its database with another tool.
+Agents' memory and Ed's rope notes are one store: `~/.know/rope.db`, rope's Turso file. A note is a rope line: facts sit under `know › facts`, activity under `know › activity › <date>`. Every other rope line counts as a fact too, so agents see Ed's notes and Ed sees theirs in rope (http://127.0.0.1:9099). Code: `~/i/me/rope/src/lib/store/know.ts`, CLI `~/i/me/rope/bin/know.ts` (on PATH as `know`).
 
 ## Commands
-- `know me [-n 18] ["<turn activity>"]`: print the 18 newest notes, then save the optional text as an activity note (`saved #N`). Takes `--kind` and `--replaces` like `note`. Run with the request and intent at the start of every turn and the outcome, decisions, and open work at the end.
+- `know me [-n 18] ["<turn activity>"]`: print the 18 newest lines, then save the optional text as activity (`saved #N`). Takes `--kind` and `--replaces` like `note`. Run with the request and intent at the start of every turn and the outcome, decisions, and open work at the end.
 - `know note --kind activity "<activity>"`: record other activity; save lasting facts separately.
 - `know note "<verified fact>"`: save one fact, at most 280 chars.
-- `know note --replaces 12 --replaces 18 "<verified replacement>"`: retire named notes from factual recall. Old notes remain in history. Name only notes this statement actually replaces.
-- `know ask [-n 9] "<question>"`: search current facts. Matches need both semantic similarity and a meaningful query word in the note. Results show cosine similarity, not a probability of correctness. It reports no strong match when no candidate passes.
-- `know grep [-n 18] <regex>`: search all note history, case ignored; activity and replaced notes are labeled.
-- `know doctor`: validate the complete journal and index, replay missing notes, and check index integrity.
-- `know rebuild`: validate the journal, build and check a replacement index, then install it. The journal stays unchanged; embeddings regenerate on the next `ask`.
-- `skills/know/bin/setup`: build the venv and fetch the model. Safe to run again.
+- `know note --replaces 12 --replaces 18 "<verified replacement>"`: marks the named notes done, so `ask` skips them; `grep` labels them `[replaced]`. Name only notes this statement actually replaces.
+- `know ask [-n 9] "<question>"`: search current facts by meaning. A match needs similarity ≥ 0.4 and a meaningful query word in the note. Similarity is not a probability of correctness.
+- `know grep [-n 18] <regex>`: search every live line, case ignored; activity and replaced notes are labeled.
+- `know doctor`: integrity check and counts.
 
-## Files
-- `~/.know/log`: journal. New records use JSON fields `i` (ID), `d` (date), `t` (text), `k` (`a` activity, `f` fact), `x` (replaced IDs). Legacy `#id date text` records remain readable as facts; old records are never rewritten.
-- `~/.know/db`: disposable index, table `n(i, d, t, e)`. `~/.know/lock`: exclusive CLI lock. `KNOW_DIR` relocates the store for isolated tests.
-- `~/.venvs/know`: Python 3.11, dependencies pinned in `requirements.txt`. `~/models/arctic-embed-xs`: shared ONNX model, 384 dims (23 MB).
+## How it works
+- The rope server (`~/i/me/rope/bin/run`, started at sway login) holds Turso's exclusive file lock, so `know` posts to `127.0.0.1:9099/api/know`. When the server is down, `know` opens the file itself, and waits up to ~10 s if it is starting.
+- Meaning: blink-8M int8 static embeddings (`~/models/static-int8/blink-8M-int8.safetensors` + `~/models/blink-8M/tokenizer.json`), plain JS, no ML runtime. Vectors live in rope's `l.e`; a model change clears them, and they refill on the next `ask` or within a second on the server.
+- Notes imported from the old journal kept their ids (0-3254); new ones count on from the highest id under 1e12. Lines made in rope have long time-based ids.
+- `~/.know/log` is the old append-only journal, frozen 2026-11-19 after the import; nothing writes it now.
 
 ## Traps
 - Search similarity does not prove a fact is current or true. Check current files or authoritative sources before acting. A miss means verify elsewhere, then record what was verified.
-- Old entries default to facts for compatibility. Explicitly replace observed stale notes or retire reviewed activity entries with an activity record; do not classify or delete old notes in bulk by guessed wording.
-- `note` syncs the journal before updating the index. If index insertion fails, it reports the saved ID; the next command replays it before allocating another ID. A journal write/sync failure reports uncertain persistence. Run `know doctor` to confirm recovery before retrying the same fact.
-- `ask` embeds only current facts without embeddings, under the lock. The first query after a rebuild can take longer. Activity gets no embeddings.
-
-## Repair
-- Start with `know doctor`. For an index mismatch or corruption with a valid journal, use `know rebuild`, then `know doctor`.
-- A conflicting ID, malformed record, or incomplete final line stops recovery before replay. Preserve the journal and report the exact location; never repair it by silently discarding records or deleting store files.
-- Regression checks: `PYTHONDONTWRITEBYTECODE=1 ~/.venvs/know/bin/python ~/.agents/skills/know/tests.py`. They use temporary stores and the shared model.
+- Never open `~/.know/rope.db` with another tool while the server runs (lock error); use `know` or rope's HTTP API.
+- Marking a line done in rope also retires it from `ask`.
