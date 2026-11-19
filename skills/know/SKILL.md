@@ -11,7 +11,8 @@ Agents' memory and Ed's rope notes are one store: `~/.know/rope.db`, rope's Turs
 - `know me [-n 18] ["<turn activity>"]`: print the 18 newest lines, then save the optional text as activity (`saved #N`). Takes `--kind` and `--replaces` like `note`. Run with the request and intent at the start of every turn and the outcome, decisions, and open work at the end.
 - `know note --kind activity "<activity>"`: record other activity; save lasting facts separately.
 - `know note "<verified fact>"`: save one fact, at most 280 chars.
-- `know note --under todo [--under wsp] "<text>"`: file a note under the rope line with that text instead of `facts` (case ignored; newest edit wins when names repeat; a missing line is made). One note can sit under many lines. Use when Ed says "save this under X".
+- `know note --under todo [--under wsp] "<text>"`: file a note under the rope line with that text instead of `facts` Names match ignoring case, spaces, punctuation and a plural s; the newest edit wins. A missing line is made, unless a line is one letter off: then the save stops and names it. Use that name, or add `--new` only when Ed wants a new line. One note can sit under many lines. Use when Ed says "save this under X".
+- No duplicates: a note whose text matches a live line links that line instead of copying it (`#N (already a line; linked here too)`).
 - `know ls <line>`: the lines under that line, in rope's order.
 - `know note --replaces 12 --replaces 18 "<verified replacement>"`: marks the named notes done, so `ask` skips them; `grep` labels them `[replaced]`. Name only notes this statement actually replaces.
 - `know ask [-n 9] "<question>"`: search current facts by meaning. A match needs similarity ≥ 0.4 and a meaningful query word in the note. Similarity is not a probability of correctness.
