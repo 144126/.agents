@@ -27,6 +27,8 @@ Agents' memory and Ed's rope notes are one store: `~/.know/rope.db`, rope's Turs
 - `~/.know/log` is the old append-only journal, frozen 2026-11-19 after the import; nothing writes it now.
 
 ## Traps
+- The server runs rope's build: after changing `know.ts`, run `pnpm build` in `~/i/me/rope`, then kill the pid on :9099 (`bin/run` restarts it in 3 s). Until then `know` runs the old code.
+- Projects: each is a line under `projects`; notes about it sit under that line (filed with `--under`).
 - Search similarity does not prove a fact is current or true. Check current files or authoritative sources before acting. A miss means verify elsewhere, then record what was verified.
 - Never open `~/.know/rope.db` with another tool while the server runs (lock error); use `know` or rope's HTTP API.
 - Marking a line done in rope also retires it from `ask`.
